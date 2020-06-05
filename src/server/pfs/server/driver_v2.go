@@ -8,6 +8,7 @@ import (
 	"path"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
@@ -144,14 +145,17 @@ func (d *driverV2) finishCommitV2(txnCtx *txnenv.TransactionContext, commit *pfs
 func (d *driverV2) withFileSet(ctx context.Context, repo, commit string, f func(*fileset.FileSet) error) (retErr error) {
 	// TODO subFileSet will need to be incremented through postgres or etcd.
 	d.mu.Lock()
-	subFileSetStr := fileset.SubFileSetStr(d.subFileSet)
+	n := d.subFileSet
+	d.subFileSet++
+	d.mu.Unlock()
+
+	subFileSetStr := fileset.SubFileSetStr(n)
 	subFileSetPath := path.Join(repo, commit, subFileSetStr)
 	fs, err := d.storage.New(ctx, path.Join(tmpPrefix, subFileSetPath), subFileSetStr)
 	if err != nil {
 		return err
 	}
-	d.subFileSet++
-	d.mu.Unlock()
+
 	defer func() {
 		if err := d.storage.Delete(ctx, path.Join(tmpPrefix, subFileSetPath)); retErr == nil {
 			retErr = err
@@ -161,6 +165,32 @@ func (d *driverV2) withFileSet(ctx context.Context, repo, commit string, f func(
 		return err
 	}
 	if err := fs.Close(); err != nil {
+		return err
+	}
+	return d.compactionQueue.RunTaskBlock(ctx, func(m *work.Master) error {
+		return d.compact(m, subFileSetPath, []string{path.Join(tmpPrefix, subFileSetPath)})
+	})
+}
+
+func (d *driverV2) withWriter(ctx context.Context, repo, commit string, f func(int64, *fileset.Writer) error) (retErr error) {
+	// TODO subFileSet will need to be incremented through postgres or etcd.
+	d.mu.Lock()
+	n := d.subFileSet
+	d.subFileSet++
+	d.mu.Unlock()
+
+	subFileSetStr := fileset.SubFileSetStr(n)
+	subFileSetPath := path.Join(repo, commit, subFileSetStr)
+	fsw := d.storage.NewWriter(ctx, path.Join(tmpPrefix, subFileSetPath))
+	defer func() {
+		if err := d.storage.Delete(ctx, path.Join(tmpPrefix, subFileSetPath)); retErr == nil {
+			retErr = err
+		}
+	}()
+	if err := f(n, fsw); err != nil {
+		return err
+	}
+	if err := fsw.Close(); err != nil {
 		return err
 	}
 	return d.compactionQueue.RunTaskBlock(ctx, func(m *work.Master) error {
@@ -205,6 +235,7 @@ func globLiteralPrefix(glob string) string {
 
 // TODO Need to figure out path cleaning.
 func (d *driverV2) getTarConditional(ctx context.Context, repo, commit, glob string, f func(*FileReader) error) error {
+	glob = cleanPath(glob)
 	compactedPaths := []string{path.Join(repo, commit, fileset.Compacted)}
 	prefix := globLiteralPrefix(glob)
 	mr, err := d.storage.NewMergeReader(ctx, compactedPaths, index.WithPrefix(prefix))
@@ -256,6 +287,20 @@ func (d *driverV2) getTarConditional(ctx context.Context, repo, commit, glob str
 		return f(fr)
 	}
 	return nil
+}
+
+func (d *driverV2) getFile(ctx context.Context, repoName, commitID, p string, f func(fr *FileReader) error) error {
+	if strings.ContainsAny(p, "*?") {
+		return errors.New("glob not allowed")
+	}
+	called := false
+	return d.getTarConditional(ctx, repoName, commitID, p, func(fr *FileReader) error {
+		if called {
+			panic("getTarConditional matched more than one")
+		}
+		called = true
+		return f(fr)
+	})
 }
 
 func matchFunc(glob string) (func(string) bool, error) {
@@ -520,19 +565,80 @@ func (d *driverV2) compactionWorker() {
 	panic(err)
 }
 
-func (d *driverV2) globFileV2(pachClient *client.APIClient, commit *pfs.Commit, pattern string, f func(*pfs.FileInfoV2) error) (retErr error) {
-	// Validate arguments
-	if commit == nil {
-		return errors.New("commit cannot be nil")
+func (d *driverV2) copyFile(pachClient *client.APIClient, src *pfs.File, dst *pfs.File, overwrite bool) (retErr error) {
+	ctx := pachClient.Ctx()
+	if overwrite {
+		// TODO: after delete merging is sorted out add overwrite support
+		return errors.New("overwrite not yet supported")
 	}
-	if commit.Repo == nil {
-		return errors.New("commit repo cannot be nil")
-	}
-	if err := d.checkIsAuthorized(pachClient, commit.Repo, auth.Scope_READER); err != nil {
-		return err
+	srcPrefix := cleanPath(src.Path)
+	dstPrefix := cleanPath(dst.Path)
+	pathTransform := func(x string) string {
+		if !strings.HasPrefix(x, srcPrefix) {
+			panic("cannot apply path transform")
+		}
+		return path.Join(dstPrefix, x[len(srcPrefix):])
 	}
 
-	return d.getTarConditional(pachClient.Ctx(), commit.Repo.Name, commit.ID, pattern, func(fr *FileReader) error {
+	mr, err := d.storage.NewMergeReader(ctx, []string{commitKey(src.Commit)})
+	if err != nil {
+		return err
+	}
+	return d.withWriter(ctx, dst.Commit.Repo.Name, dst.Commit.ID, func(n int64, dstFs *fileset.Writer) error {
+		return mr.Iterate(func(mfr *fileset.FileMergeReader) error {
+			h, err := mfr.Header()
+			if err != nil {
+				return err
+			}
+			h.Name = cleanPath(h.Name)
+			if !strings.HasPrefix(h.Name, srcPrefix) {
+				return nil
+			}
+			h.Name = pathTransform(h.Name)
+			if err := dstFs.WriteHeader(h); err != nil {
+				return err
+			}
+			return mfr.WriteDataTo(dstFs)
+		})
+	})
+}
+
+func (d *driverV2) inspectFile(pachClient *client.APIClient, file *pfs.File) (fi *pfs.FileInfoV2, retErr error) {
+	commitInfo, err := d.inspectCommit(pachClient, file.Commit, pfs.CommitState_FINISHED)
+	if err != nil {
+		return nil, err
+	}
+	commit := commitInfo.Commit
+	called := false
+	err = d.getTarConditional(pachClient.Ctx(), commit.Repo.Name, commit.ID, file.Path, func(fr *FileReader) error {
+		if called {
+			return errors.New("InspectFile called with ambiguous glob")
+		}
+		called = true
+		fi = fr.Info()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if fi == nil {
+		return nil, pfsserver.ErrFileNotFound{File: file}
+	}
+	return fi, nil
+}
+
+func (d *driverV2) walkFile(pachClient *client.APIClient, file *pfs.File, f func(*pfs.FileInfoV2) error) (retErr error) {
+	commitInfo, err := d.inspectCommit(pachClient, file.Commit, pfs.CommitState_FINISHED)
+	if err != nil {
+		return err
+	}
+	commit := commitInfo.Commit
+	p := path.Join(file.Path, "**")
+	return d.getTarConditional(pachClient.Ctx(), commit.Repo.Name, commit.ID, p, func(fr *FileReader) error {
 		return f(fr.Info())
 	})
+}
+
+func cleanPath(x string) string {
+	return strings.Trim(x, "/")
 }

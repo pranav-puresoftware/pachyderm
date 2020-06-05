@@ -57,9 +57,6 @@ func (a *apiServerV2) FileOperationV2(server pfs.API_FileOperationV2Server) (ret
 		if err != nil {
 			return 0, err
 		}
-		if !a.env.StorageV2 {
-			return 0, errors.Errorf("new storage layer disabled")
-		}
 		repo := req.Commit.Repo.Name
 		commit := req.Commit.ID
 		var bytesRead int64
@@ -249,5 +246,28 @@ func (a *apiServerV2) GlobFileV2(request *pfs.GlobFileRequest, server pfs.API_Gl
 	func() { a.Log(request, nil, nil, 0) }()
 	return a.driver.globFileV2(a.env.GetPachClient(server.Context()), request.Commit, request.Pattern, func(fi *pfs.FileInfoV2) error {
 		return server.Send(fi)
+	})
+}
+
+// CopyFile implements the protobuf pfs.CopyFile RPC
+func (a *apiServerV2) CopyFile(ctx context.Context, request *pfs.CopyFileRequest) (response *types.Empty, retErr error) {
+	func() { a.Log(request, nil, nil, 0) }()
+	defer func(start time.Time) { a.Log(request, response, retErr, time.Since(start)) }(time.Now())
+	if err := a.driver.copyFile(a.env.GetPachClient(ctx), request.Src, request.Dst, request.Overwrite); err != nil {
+		return nil, err
+	}
+	return &types.Empty{}, nil
+}
+
+// InspectFileV2 returns info about a file.
+func (a *apiServerV2) InspectFileV2(ctx context.Context, req *pfs.InspectFileRequest) (*pfs.FileInfoV2, error) {
+	return a.driver.inspectFile(a.env.GetPachClient(ctx), req.File)
+}
+
+// WalkFileV2 walks over all the files under a directory, including children of children.
+func (a *apiServerV2) WalkFileV2(req *pfs.WalkFileRequest, server pfs.API_WalkFileV2Server) error {
+	pachClient := a.env.GetPachClient(server.Context())
+	return a.driver.walkFile(pachClient, req.File, func(finfo *pfs.FileInfoV2) error {
+		return server.Send(finfo)
 	})
 }

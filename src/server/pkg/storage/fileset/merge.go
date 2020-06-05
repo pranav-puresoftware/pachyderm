@@ -257,6 +257,11 @@ func (fmr *FileMergeReader) WriteTo(w *Writer) error {
 		return nil
 	}
 	// Write merged content.
+	return fmr.WriteDataTo(w)
+}
+
+// WriteDataTo writes just the file data to w. No header is written.
+func (fmr *FileMergeReader) WriteDataTo(w *Writer) error {
 	return fmr.tsmr.WriteTo(w)
 }
 

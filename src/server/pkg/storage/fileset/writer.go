@@ -58,6 +58,7 @@ func (w *Writer) WriteHeader(hdr *tar.Header) error {
 	// Setup header tag for the file.
 	w.cw.Tag(headerTag)
 	// Write file header.
+	hdr.Name = CleanTarPath(hdr.Name, hdr.FileInfo().IsDir())
 	return w.tw.WriteHeader(hdr)
 }
 
