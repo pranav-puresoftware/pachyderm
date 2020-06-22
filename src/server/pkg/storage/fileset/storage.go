@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/containerd/log"
 	units "github.com/docker/go-units"
 	"github.com/pachyderm/pachyderm/src/server/pkg/obj"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/chunk"
@@ -17,7 +18,7 @@ import (
 )
 
 const (
-	prefix = "pfs"
+	semanticPrefix = "root"
 	// TODO Not sure if these are the tags we should use, but the header and padding tag should show up before and after respectively in the
 	// lexicographical ordering of file content tags.
 	// headerTag is the tag used for the tar header bytes.
@@ -39,7 +40,7 @@ const (
 	// Diff is the suffix of a path that points to the diff of the prefix.
 	Diff = "diff"
 	// Compacted is the suffix of a path that points to the compaction of the prefix.
-	Compacted = "compacted"
+	CompactedSuffix = "compacted"
 )
 
 // Storage is the abstraction that manages fileset storage.
@@ -181,12 +182,12 @@ func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFile
 		for size > s.levelZeroSize*int64(math.Pow(float64(s.levelSizeBase), float64(level))) {
 			level++
 		}
-		spec.Output = path.Join(fileSet, Compacted, strconv.Itoa(level))
+		spec.Output = path.Join(fileSet, CompactedSuffix, strconv.Itoa(level))
 		return spec, nil
 	}
 	// Handle commits with a parent commit.
 	compactedFileSet[0] = applyPrefix(compactedFileSet[0])
-	if err := s.objC.Walk(ctx, path.Join(compactedFileSet[0], Compacted), func(name string) error {
+	if err := s.objC.Walk(ctx, path.Join(compactedFileSet[0], CompactedSuffix), func(name string) error {
 		nextLevel, err := strconv.Atoi(path.Base(name))
 		if err != nil {
 			return err
@@ -205,7 +206,7 @@ func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFile
 			if spec.Output == "" {
 				spec.Input = append(spec.Input, name)
 			} else {
-				w, err := s.objC.Writer(ctx, path.Join(fileSet, Compacted, strconv.Itoa(level)))
+				w, err := s.objC.Writer(ctx, path.Join(fileSet, CompactedSuffix, strconv.Itoa(level)))
 				if err != nil {
 					return err
 				}
@@ -221,13 +222,15 @@ func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFile
 		// If the output level has not been determined yet and the compaction size is less than the threshold for
 		// the current level, then the current level becomes the output level.
 		if spec.Output == "" && size <= s.levelZeroSize*int64(math.Pow(float64(s.levelSizeBase), float64(level))) {
-			spec.Output = path.Join(fileSet, Compacted, strconv.Itoa(level))
+			spec.Output = path.Join(fileSet, CompactedSuffix, strconv.Itoa(level))
 		}
 		level++
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+	spec.Input = removePrefixes(spec.Input)
+	spec.Output = removePrefix(spec.Output)
 	return spec, nil
 }
 
@@ -235,10 +238,13 @@ func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFile
 func (s *Storage) Delete(ctx context.Context, fileSet string) error {
 	fileSet = applyPrefix(fileSet)
 	return s.objC.Walk(ctx, fileSet, func(name string) error {
+		if err := s.objC.Delete(ctx, name); err != nil {
+			return err
+		}
 		if err := s.chunks.DeleteSemanticReference(ctx, name); err != nil {
 			return err
 		}
-		return s.objC.Delete(ctx, name)
+		return nil
 	})
 }
 
@@ -251,10 +257,13 @@ func (s *Storage) WalkFileSet(ctx context.Context, prefix string, f func(string)
 
 func applyPrefix(fileSet string) string {
 	fileSet = strings.TrimLeft(fileSet, "/")
-	if strings.HasPrefix(fileSet, prefix) {
+	if strings.HasPrefix(fileSet, semanticPrefix) {
+		// TODO: use this to stongly enforce internal vs external paths
+		// then remove this check and always prefix
+		log.L.Warnf("path %s already has prefix %s", fileSet, semanticPrefix)
 		return fileSet
 	}
-	return path.Join(prefix, fileSet)
+	return path.Join(semanticPrefix, fileSet)
 }
 
 func applyPrefixes(fileSets []string) []string {
@@ -266,10 +275,18 @@ func applyPrefixes(fileSets []string) []string {
 }
 
 func removePrefix(fileSet string) string {
-	if !strings.HasPrefix(fileSet, prefix) {
-		panic(fileSet + " does not have prefix " + prefix)
+	if !strings.HasPrefix(fileSet, semanticPrefix) {
+		panic(fileSet + " does not have prefix " + semanticPrefix)
 	}
-	return fileSet[len(prefix):]
+	return fileSet[len(semanticPrefix):]
+}
+
+func removePrefixes(xs []string) (ys []string) {
+	ys = make([]string, len(xs))
+	for i := range xs {
+		ys[i] = removePrefix(xs[i])
+	}
+	return ys
 }
 
 // SubFileSetStr returns the string representation of a subfileset.

@@ -107,7 +107,7 @@ func (d *driverV2) finishCommitV2(txnCtx *txnenv.TransactionContext, commit *pfs
 			if err := d.storage.Delete(context.Background(), path.Join(commitPath, fileset.Diff)); err != nil {
 				return err
 			}
-			return d.storage.Delete(context.Background(), path.Join(commitPath, fileset.Compacted))
+			return d.storage.Delete(context.Background(), path.Join(commitPath, fileset.CompactedSuffix))
 		}, backoff.NewExponentialBackOff()); err != nil {
 			return err
 		}
@@ -200,7 +200,7 @@ func globLiteralPrefix(glob string) string {
 
 // TODO Need to figure out path cleaning.
 func (d *driverV2) getTarConditional(ctx context.Context, repo, commit, glob string, f func(*FileReader) error) error {
-	compactedPaths := []string{path.Join(repo, commit, fileset.Compacted)}
+	compactedPaths := []string{path.Join(repo, commit, fileset.CompactedSuffix)}
 	prefix := globLiteralPrefix(glob)
 	mr, err := d.storage.NewMergeReader(ctx, compactedPaths, index.WithPrefix(prefix))
 	if err != nil {
