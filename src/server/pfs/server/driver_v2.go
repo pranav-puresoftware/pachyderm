@@ -565,6 +565,23 @@ func (d *driverV2) compactionWorker() {
 	panic(err)
 }
 
+func (d *driverV2) globFileV2(pachClient *client.APIClient, commit *pfs.Commit, pattern string, f func(*pfs.FileInfoV2) error) (retErr error) {
+	// Validate arguments
+	if commit == nil {
+		return errors.New("commit cannot be nil")
+	}
+	if commit.Repo == nil {
+		return errors.New("commit repo cannot be nil")
+	}
+	if err := d.checkIsAuthorized(pachClient, commit.Repo, auth.Scope_READER); err != nil {
+		return err
+	}
+
+	return d.getTarConditional(pachClient.Ctx(), commit.Repo.Name, commit.ID, pattern, func(fr *FileReader) error {
+		return f(fr.Info())
+	})
+}
+
 func (d *driverV2) copyFile(pachClient *client.APIClient, src *pfs.File, dst *pfs.File, overwrite bool) (retErr error) {
 	ctx := pachClient.Ctx()
 	if overwrite {
