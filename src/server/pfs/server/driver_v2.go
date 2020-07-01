@@ -657,5 +657,5 @@ func (d *driverV2) walkFile(pachClient *client.APIClient, file *pfs.File, f func
 }
 
 func cleanPath(x string) string {
-	return strings.Trim(x, "/")
+	return strings.TrimLeft(x, "/")
 }

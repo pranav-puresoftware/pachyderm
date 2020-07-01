@@ -134,9 +134,6 @@ func (a *apiServerV2) GetTarV2(request *pfs.GetTarRequestV2, server pfs.API_GetT
 	func() { a.Log(request, nil, nil, 0) }()
 	defer func(start time.Time) { a.Log(request, nil, retErr, time.Since(start)) }(time.Now())
 	return metrics.ReportRequestWithThroughput(func() (int64, error) {
-		if !a.env.StorageV2 {
-			return 0, errors.Errorf("new storage layer disabled")
-		}
 		repo := request.File.Commit.Repo.Name
 		commit := request.File.Commit.ID
 		glob := request.File.Path

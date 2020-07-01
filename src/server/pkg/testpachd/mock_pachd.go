@@ -553,6 +553,7 @@ type mockPFSServer struct {
 	ListFileV2          mockListFileV2
 	InspectFileV2       mockInspectFileV2
 	WalkFileV2          mockWalkFileV2
+	GlobFileV2          mockGlobFileV2
 }
 
 func (api *pfsServerAPI) CreateRepo(ctx context.Context, req *pfs.CreateRepoRequest) (*types.Empty, error) {
@@ -764,6 +765,7 @@ func (api *pfsServerAPI) GlobFileV2(req *pfs.GlobFileRequest, serv pfs.API_GlobF
 		return api.mock.GlobFileV2.handler(req, serv)
 	}
 	return errors.Errorf("unhandled pachd mock pfs.GlobFileV2")
+}
 func (api *pfsServerAPI) InspectFileV2(ctx context.Context, req *pfs.InspectFileRequest) (*pfs.FileInfoV2, error) {
 	if api.mock.InspectFileV2.handler != nil {
 		return api.mock.InspectFileV2.handler(ctx, req)

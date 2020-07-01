@@ -48,6 +48,10 @@ func newWriter(ctx context.Context, objC obj.Client, chunks *chunk.Storage, path
 
 // WriteHeader writes a tar header and prepares to accept the file's contents.
 func (w *Writer) WriteHeader(hdr *tar.Header) error {
+	hdr.Name = CleanTarPath(hdr.Name, hdr.FileInfo().IsDir())
+	if err := checkHeader(hdr); err != nil {
+		return err
+	}
 	// Finish prior file.
 	if err := w.finishPriorFile(); err != nil {
 		return err
@@ -58,7 +62,6 @@ func (w *Writer) WriteHeader(hdr *tar.Header) error {
 	// Setup header tag for the file.
 	w.cw.Tag(headerTag)
 	// Write file header.
-	hdr.Name = CleanTarPath(hdr.Name, hdr.FileInfo().IsDir())
 	return w.tw.WriteHeader(hdr)
 }
 

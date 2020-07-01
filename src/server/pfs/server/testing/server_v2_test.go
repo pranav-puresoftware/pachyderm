@@ -186,7 +186,7 @@ func newCommitGenerator(opts ...commitGeneratorOption) commitGenerator {
 				return err
 			}
 			getTar := func(c *client.APIClient) error {
-				r, err := c.GetTarV2(repo, commit.ID, "/")
+				r, err := c.GetTarV2(repo, commit.ID, "*")
 				if err != nil {
 					return err
 				}
@@ -621,17 +621,15 @@ func (v *validator) recordFileSet(files fileSetSpec) {
 }
 
 func (v *validator) validate(r io.Reader) error {
-	hdr, err := tar.NewReader(r).Next()
-	if err != nil {
-		// We expect an empty tar stream if no files were uploaded.
-		if errors.Is(err, io.EOF) && len(v.files) == 0 {
-			return nil
-		}
-		return err
-	}
-	if hdr.Name != "" {
-		return errors.Errorf("expected root header, got %v", hdr.Name)
-	}
+	// _, err := tar.NewReader(r).Next()
+	// if err != nil {
+	// 	// We expect an empty tar stream if no files were uploaded.
+	// 	if err == io.EOF && len(v.files) == 0 {
+	// 		return nil
+	// 	}
+	// 	return err
+	// }
+
 	var filesSorted []string
 	for file := range v.files {
 		filesSorted = append(filesSorted, file)

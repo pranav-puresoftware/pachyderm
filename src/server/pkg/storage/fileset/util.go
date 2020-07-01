@@ -3,8 +3,10 @@ package fileset
 import (
 	"strings"
 
+	"github.com/pachyderm/pachyderm/src/client/pkg/errors"
 	"github.com/pachyderm/pachyderm/src/server/pkg/obj"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/chunk"
+	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/tar"
 )
 
 // WithLocalStorage constructs a local storage instance for testing during the lifetime of
@@ -30,4 +32,11 @@ func CleanTarPath(x string, isDir bool) string {
 func IsCleanTarPath(x string, isDir bool) bool {
 	y := CleanTarPath(x, isDir)
 	return y == x
+}
+
+func checkHeader(th *tar.Header) error {
+	if th.Name == "" || th.Name == "/" {
+		return errors.Errorf("root entry not allowed")
+	}
+	return nil
 }

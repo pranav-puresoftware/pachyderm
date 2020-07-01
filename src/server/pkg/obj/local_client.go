@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -31,14 +32,14 @@ type localClient struct {
 
 func (c *localClient) normPath(path string) string {
 	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		return filepath.Join(c.root, path)
-	}
-	return path
+	return filepath.Join(c.root, path)
 }
 
-func (c *localClient) Writer(_ context.Context, path string) (io.WriteCloser, error) {
-	fullPath := c.normPath(path)
+func (c *localClient) Writer(_ context.Context, p string) (io.WriteCloser, error) {
+	fullPath := c.normPath(p)
+	if path.Clean(fullPath) == path.Clean(c.root) {
+		return nil, errors.New("cannot write an object to the root")
+	}
 
 	// Create the directory since it may not exist
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
