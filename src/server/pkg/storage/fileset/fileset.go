@@ -129,7 +129,7 @@ func (f *FileSet) createParent(name string, tag string) {
 	mf := &memFile{
 		hdr: &tar.Header{
 			Typeflag: tar.TypeDir,
-			Name:     name,
+			Name:     CleanTarPath(name, true),
 		},
 		tag:  tag,
 		data: &bytes.Buffer{},

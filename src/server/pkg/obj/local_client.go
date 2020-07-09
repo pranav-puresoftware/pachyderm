@@ -32,7 +32,10 @@ type localClient struct {
 
 func (c *localClient) normPath(path string) string {
 	path = filepath.Clean(path)
-	return filepath.Join(c.root, path)
+	if !filepath.IsAbs(path) {
+		return filepath.Join(c.root, path)
+	}
+	return path
 }
 
 func (c *localClient) Writer(_ context.Context, p string) (io.WriteCloser, error) {
@@ -40,7 +43,6 @@ func (c *localClient) Writer(_ context.Context, p string) (io.WriteCloser, error
 	if path.Clean(fullPath) == path.Clean(c.root) {
 		return nil, errors.New("cannot write an object to the root")
 	}
-
 	// Create the directory since it may not exist
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return nil, errors.EnsureStack(err)
@@ -50,7 +52,6 @@ func (c *localClient) Writer(_ context.Context, p string) (io.WriteCloser, error
 	if err != nil {
 		return nil, errors.EnsureStack(err)
 	}
-
 	return file, nil
 }
 
@@ -113,6 +114,7 @@ func (c *localClient) IsRetryable(err error) bool {
 }
 
 func (c *localClient) IsNotExist(err error) bool {
+	err = errors.Unwrap(err)
 	return strings.Contains(err.Error(), "no such file or directory") ||
 		strings.Contains(err.Error(), "cannot find the file specified")
 }
@@ -136,3 +138,31 @@ func newSectionReadCloser(f *os.File, offset uint64, size uint64) *sectionReadCl
 func (s *sectionReadCloser) Close() error {
 	return errors.EnsureStack(s.f.Close())
 }
+
+// type localWriter struct {
+// 	path string
+// 	f    *os.File
+// }
+
+// func (lw *localWriter) ensureFile() error {
+// 	if lw.f != nil {
+// 		return nil
+// 	}
+
+// 	lw.f = f
+// 	return nil
+// }
+
+// func (lw *localWriter) Write(data []byte) (int, error) {
+// 	if err := lw.ensureFile(); err != nil {
+// 		return -1, err
+// 	}
+// 	return lw.f.Write(data)
+// }
+
+// func (w *localWriter) Close() error {
+// 	if w.f == nil {
+// 		return nil
+// 	}
+// 	return w.f.Close()
+// }
