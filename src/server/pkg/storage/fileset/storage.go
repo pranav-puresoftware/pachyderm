@@ -13,6 +13,7 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/pkg/obj"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/chunk"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/index"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -169,20 +170,23 @@ type CompactSpec struct {
 
 // CompactSpec returns a compaction specification that determines the input filesets (the diff file set and potentially
 // compacted filesets) and output fileset.
-func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFileSet ...string) (ret *CompactSpec, retErr error) {
+func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFileSet ...string) (*CompactSpec, error) {
 	if len(compactedFileSet) > 1 {
 		return nil, errors.WithStack(errors.Errorf("multiple compacted FileSets"))
 	}
-	// internal vs external path transforms
+	// Internal vs external path transforms
 	fileSet = applyPrefix(fileSet)
 	compactedFileSet = applyPrefixes(compactedFileSet)
-	defer func() {
-		if ret != nil {
-			ret.Input = removePrefixes(ret.Input)
-			ret.Output = removePrefix(ret.Output)
-			fmt.Println(ret.Input, ret.Output)
-		}
-	}()
+	spec, err := s.compactSpec(ctx, fileSet, compactedFileSet...)
+	if err != nil {
+		return nil, err
+	}
+	spec.Input = removePrefixes(spec.Input)
+	spec.Output = removePrefix(spec.Output)
+	return spec, nil
+}
+
+func (s *Storage) compactSpec(ctx context.Context, fileSet string, compactedFileSet ...string) (ret *CompactSpec, retErr error) {
 	idx, err := index.GetTopLevelIndex(ctx, s.objC, path.Join(fileSet, Diff))
 	if err != nil {
 		return nil, err
@@ -191,7 +195,7 @@ func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFile
 	spec := &CompactSpec{
 		Input: []string{path.Join(fileSet, Diff)},
 	}
-	level := 0
+	var level int
 	// Handle first commit being compacted.
 	if len(compactedFileSet) == 0 {
 		for size > s.levelSize(level) {
@@ -200,36 +204,41 @@ func (s *Storage) CompactSpec(ctx context.Context, fileSet string, compactedFile
 		spec.Output = path.Join(fileSet, Compacted, levelName(level))
 		return spec, nil
 	}
-	// while we can't fit it all in the current level
-	for size > s.levelSize(level) {
+	// While we can't fit it all in the current level
+	for {
 		levelPath := path.Join(compactedFileSet[0], Compacted, levelName(level))
 		idx, err := index.GetTopLevelIndex(ctx, s.objC, levelPath)
 		if err != nil && !s.objC.IsNotExist(err) {
 			return nil, err
 		}
-		// the level does exist. Add it's size to the total, and mark it for compaction.
+		// The level does exist. Add it's size to the total, and mark it for compaction.
 		if err == nil {
 			spec.Input = append(spec.Input, levelPath)
 			size += idx.SizeBytes
 		}
+		if size <= s.levelSize(level) {
+			break
+		}
 		level++
 	}
-	// now we know the output level
+	// Now we know the output level
 	spec.Output = path.Join(fileSet, Compacted, levelName(level))
-	// copy the other levels that may exist
-	for i := level + 1; ; i++ {
-		levelPath := path.Join(compactedFileSet[0], Compacted, levelName(i))
-		_, err := index.GetTopLevelIndex(ctx, s.objC, levelPath)
+	// Copy the other levels that may exist
+	if err := s.objC.Walk(ctx, path.Join(compactedFileSet[0], Compacted), func(src string) error {
+		lName := path.Base(src)
+		l, err := parseLevel(lName)
 		if err != nil {
-			if s.objC.IsNotExist(err) {
-				break
+			return err
+		}
+		dst := path.Join(fileSet, Compacted, levelName(l))
+		if l > level {
+			if err := copyObject(ctx, s.objC, src, dst); err != nil {
+				return err
 			}
-			return nil, err
 		}
-		dst := path.Join(fileSet, Compacted, levelName(i))
-		if err := copyObject(ctx, s.objC, levelPath, dst); err != nil {
-			return nil, err
-		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return spec, nil
 }
@@ -259,7 +268,7 @@ func (s *Storage) levelSize(i int) int64 {
 func applyPrefix(fileSet string) string {
 	fileSet = strings.TrimLeft(fileSet, "/")
 	if strings.HasPrefix(fileSet, prefix) {
-		return fileSet
+		log.Warn("may be double applying prefix in storage layer", fileSet)
 	}
 	return path.Join(prefix, fileSet)
 }
@@ -286,13 +295,21 @@ func removePrefixes(xs []string) (ys []string) {
 	return ys
 }
 
+const subFileSetFmt = "%020d"
+
 // SubFileSetStr returns the string representation of a subfileset.
 func SubFileSetStr(subFileSet int64) string {
-	return fmt.Sprintf("%020d", subFileSet)
+	return fmt.Sprintf(subFileSetFmt, subFileSet)
 }
 
 func levelName(i int) string {
-	return fmt.Sprintf("%020d", i)
+	return fmt.Sprintf(subFileSetFmt, i)
+}
+
+func parseLevel(x string) (int, error) {
+	var y int
+	_, err := fmt.Sscanf(x, subFileSetFmt, &y)
+	return y, err
 }
 
 func copyObject(ctx context.Context, objC obj.Client, src, dst string) error {

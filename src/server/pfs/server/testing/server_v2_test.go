@@ -932,8 +932,7 @@ func TestInspectFileV2(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, err)
-		t.Log(fileInfos)
-		require.Equal(t, 1, len(fileInfos))
+		require.Equal(t, 2, len(fileInfos))
 
 		return nil
 	}, config))
