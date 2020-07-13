@@ -469,9 +469,7 @@ func (d *driverV2) concatFileSets(ctx context.Context, outputPath string, inputP
 	fsw := d.storage.NewWriter(ctx, outputPath)
 	for _, inputPath := range inputPaths {
 		fsr := d.storage.NewReader(ctx, inputPath)
-		if err := fsr.Iterate(func(fr *fileset.FileReader) error {
-			return fsw.CopyFile(fr)
-		}); err != nil {
+		if err := fileset.CopyFiles(fsw, fsr); err != nil {
 			return err
 		}
 	}

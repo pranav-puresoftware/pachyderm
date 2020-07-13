@@ -44,7 +44,13 @@ func (r *Reader) Next() (*FileReader, error) {
 
 // Iterate iterates over the file readers in the fileset.
 // pathBound is an optional parameter for specifiying the upper bound (exclusive) of the iteration.
-func (r *Reader) Iterate(f func(*FileReader) error, pathBound ...string) error {
+func (r *Reader) Iterate(f func(FileReaderAPI) error, pathBound ...string) error {
+	return r.iterate(func(fr *FileReader) error {
+		return f(fr)
+	})
+}
+
+func (r *Reader) iterate(f func(*FileReader) error, pathBound ...string) error {
 	return r.ir.Iterate(func(idx *index.Index) error {
 		r.cr.NextDataRefs(idx.DataOp.DataRefs)
 		return f(newFileReader(idx, r.cr))
@@ -53,7 +59,7 @@ func (r *Reader) Iterate(f func(*FileReader) error, pathBound ...string) error {
 
 // Get writes the fileset.
 func (r *Reader) Get(w io.Writer) error {
-	return r.Iterate(func(fr *FileReader) error {
+	return r.Iterate(func(fr FileReaderAPI) error {
 		return fr.Get(w)
 	})
 }
