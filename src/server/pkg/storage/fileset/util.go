@@ -1,8 +1,6 @@
 package fileset
 
 import (
-	"io"
-
 	"github.com/pachyderm/pachyderm/src/client/pkg/errors"
 	"github.com/pachyderm/pachyderm/src/server/pkg/obj"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/chunk"
@@ -14,12 +12,6 @@ import (
 func WithLocalStorage(f func(*Storage) error) error {
 	return chunk.WithLocalStorage(func(objC obj.Client, chunks *chunk.Storage) error {
 		return f(NewStorage(objC, chunks))
-	})
-}
-
-func GetAll(r ReaderAPI, w io.Writer) error {
-	return r.Iterate(func(fr FileReaderAPI) error {
-		return fr.Get(w)
 	})
 }
 

@@ -1,13 +1,13 @@
 package server
 
 import (
-	"archive/tar"
 	"hash"
 	"io"
 	"log"
 	"path"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
@@ -24,6 +24,7 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/chunk"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/index"
+	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/tar"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/gc"
 	txnenv "github.com/pachyderm/pachyderm/src/server/pkg/transactionenv"
 	"github.com/pachyderm/pachyderm/src/server/pkg/uuid"
@@ -179,7 +180,7 @@ func (d *driverV2) getTar(ctx context.Context, repo, commit, glob string, w io.W
 	return tar.NewWriter(w).Close()
 }
 
-func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full bool, history int64, f func(*pfs.FileInfoV2) error) error {
+func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full bool, history int64, cb func(*pfs.FileInfoV2) error) error {
 	ctx := pachClient.Ctx()
 	if err := validateFile(file); err != nil {
 		return err
@@ -187,10 +188,39 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 	if err := d.checkIsAuthorized(pachClient, file.Commit.Repo, auth.Scope_READER); err != nil {
 		return err
 	}
-	// TODO: handle children of a directory
-	return d.getTarConditional(ctx, file.Commit.Repo.Name, file.Commit.ID, file.Path, func(fr *FileReader) error {
-		return f(fr.Info())
-	})
+	// exact match
+	name := strings.TrimRight(file.Path, "/")
+	mr, err := d.storage.NewMergeReader(ctx, []string{commitKey(file.Commit)}, index.WithRange(&index.PathRange{Lower: name, Upper: name}))
+	if err != nil {
+		return err
+	}
+	exact := &fileset.HeaderFilter{
+		F: func(th *tar.Header) bool {
+			return !th.FileInfo().IsDir() && name == name
+		},
+		R: mr,
+	}
+	mr, err = d.storage.NewMergeReader(ctx, []string{commitKey(file.Commit)}, index.WithPrefix(name+"/"))
+	if err != nil {
+		return err
+	}
+	children := &fileset.HeaderFilter{
+		F: func(th *tar.Header) bool {
+			return path.Dir(th.Name) == name
+		},
+		R: mr,
+	}
+	if err := exact.Iterate(func(fr fileset.FileReaderAPI) error {
+		return cb(newFileInfoV2FromFile(file.Commit, fr))
+	}); err != nil {
+		return err
+	}
+	if err := children.Iterate(func(fr fileset.FileReaderAPI) error {
+		return cb(newFileInfoV2FromFile(file.Commit, fr))
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 var globRegex = regexp.MustCompile(`[*?[\]{}!()@+^]`)
@@ -533,4 +563,19 @@ func (d *driverV2) globFileV2(pachClient *client.APIClient, commit *pfs.Commit, 
 	return d.getTarConditional(pachClient.Ctx(), commit.Repo.Name, commit.ID, pattern, func(fr *FileReader) error {
 		return f(fr.Info())
 	})
+}
+
+func newFileInfoV2FromFile(commit *pfs.Commit, fr fileset.FileReaderAPI) *pfs.FileInfoV2 {
+	idx := fr.Index()
+	h := pfs.NewHash()
+	if idx.DataOp != nil {
+		for _, dataRef := range idx.DataOp.DataRefs {
+			h.Write([]byte(dataRef.Hash))
+		}
+	}
+
+	return &pfs.FileInfoV2{
+		File: client.NewFile(commit.Repo.Name, commit.ID, idx.Path),
+		Hash: pfs.EncodeHash(h.Sum(nil)),
+	}
 }
