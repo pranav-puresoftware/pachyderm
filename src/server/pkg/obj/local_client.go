@@ -138,31 +138,3 @@ func newSectionReadCloser(f *os.File, offset uint64, size uint64) *sectionReadCl
 func (s *sectionReadCloser) Close() error {
 	return errors.EnsureStack(s.f.Close())
 }
-
-// type localWriter struct {
-// 	path string
-// 	f    *os.File
-// }
-
-// func (lw *localWriter) ensureFile() error {
-// 	if lw.f != nil {
-// 		return nil
-// 	}
-
-// 	lw.f = f
-// 	return nil
-// }
-
-// func (lw *localWriter) Write(data []byte) (int, error) {
-// 	if err := lw.ensureFile(); err != nil {
-// 		return -1, err
-// 	}
-// 	return lw.f.Write(data)
-// }
-
-// func (w *localWriter) Close() error {
-// 	if w.f == nil {
-// 		return nil
-// 	}
-// 	return w.f.Close()
-// }

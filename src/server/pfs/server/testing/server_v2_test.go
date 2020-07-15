@@ -625,85 +625,21 @@ func (v *validator) recordFileSet(files fileSetSpec) {
 }
 
 func (v *validator) validate(t *testing.T, r io.Reader) {
-	expected := v.files.makeTarStream()
-	diffTarStreams(t, expected, r)
-	// _, err := tar.NewReader(r).Next()
-	// if err != nil {
-	// 	// We expect an empty tar stream if no files were uploaded.
-	// 	if err == io.EOF && len(v.files) == 0 {
-	// 		return nil
-	// 	}
-	// 	return err
-	// }
-
-	// var filesSorted []string
-	// for file := range v.files {
-	// 	filesSorted = append(filesSorted, file)
-	// }
-	// sort.Strings(filesSorted)
-	// for _, file := range filesSorted {
-	// 	buf := &bytes.Buffer{}
-	// 	if _, err := io.CopyN(buf, r, int64(len(v.files[file]))); err != nil {
-	// 		fmt.Println("missing", file)
-	// 		require.NoError(err)
-	// 	}
-	// 	// if !bytes.Equal(v.files[file], buf.Bytes()) {
-	// 	// 	fmt.Println("VALIDATE", len(v.files[file]), buf.Len())
-	// 	// 	return errors.Errorf("file %v's header and/or content is incorrect", file)
-	// 	// }
-	// }
-}
-
-func diffTarStreams(t *testing.T, a, b io.Reader) error {
-	ta := tar.NewReader(a)
-	tb := tar.NewReader(b)
-
-	aDone, bDone := false, false
-	for !aDone && !bDone {
-		ah, err := ta.Next()
-		if err != nil {
-			if err == io.EOF {
-				aDone = true
-				break
-			}
-			return err
+	var filesSorted []string
+	for file := range v.files {
+		filesSorted = append(filesSorted, file)
+	}
+	sort.Strings(filesSorted)
+	for _, file := range filesSorted {
+		buf := &bytes.Buffer{}
+		if _, err := io.CopyN(buf, r, int64(len(v.files[file]))); err != nil {
+			fmt.Println("missing", file)
+			require.NoError(t, err)
 		}
-		bh, err := tb.Next()
-		if err != nil {
-			if err == io.EOF {
-				bDone = true
-				break
-			}
-			return err
-		}
-		if ah.Name != bh.Name {
-			t.Errorf("A: %s, B: %s\n", ah.Name, bh.Name)
+		if !bytes.Equal(v.files[file], buf.Bytes()) {
+			t.Errorf("file %v's header and/or content is incorrect", file)
 		}
 	}
-
-	for !aDone {
-		th, err := ta.Next()
-		if err != nil {
-			if err == io.EOF {
-				aDone = true
-				break
-			}
-			return err
-		}
-		t.Error("A not B: ", th.Name)
-	}
-	for !bDone {
-		th, err := tb.Next()
-		if err != nil {
-			if err == io.EOF {
-				bDone = true
-				break
-			}
-			return err
-		}
-		t.Error("B not A:", th.Name)
-	}
-	return nil
 }
 
 func (v *validator) deleteRandomFile() string {
@@ -973,7 +909,7 @@ func TestCopyFile2(t *testing.T) {
 		otherCommit, err := env.PachClient.StartCommit(repo, "other")
 		require.NoError(t, err)
 		require.NoError(t, env.PachClient.CopyFile(repo, masterCommit.ID, "files", repo, otherCommit.ID, "files", false))
-		require.NoError(t, env.PachClient.CopyFile(repo, "master", "files/0", repo, "other", "file0", false))
+		require.NoError(t, env.PachClient.CopyFile(repo, masterCommit.ID, "files/0", repo, otherCommit.ID, "file0", false))
 		require.NoError(t, env.PachClient.FinishCommit(repo, otherCommit.ID))
 		for i := 0; i < numFiles; i++ {
 			_, err = env.PachClient.InspectFileV2(ctx, &pfs.InspectFileRequest{

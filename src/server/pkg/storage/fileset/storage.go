@@ -208,11 +208,11 @@ func (s *Storage) compactSpec(ctx context.Context, fileSet string, compactedFile
 	for {
 		levelPath := path.Join(compactedFileSet[0], Compacted, levelName(level))
 		idx, err := index.GetTopLevelIndex(ctx, s.objC, levelPath)
-		if err != nil && !s.objC.IsNotExist(err) {
-			return nil, err
-		}
-		// The level does exist. Add it's size to the total, and mark it for compaction.
-		if err == nil {
+		if err != nil {
+			if !s.objC.IsNotExist(err) {
+				return nil, err
+			}
+		} else {
 			spec.Input = append(spec.Input, levelPath)
 			size += idx.SizeBytes
 		}
@@ -230,8 +230,8 @@ func (s *Storage) compactSpec(ctx context.Context, fileSet string, compactedFile
 		if err != nil {
 			return err
 		}
-		dst := path.Join(fileSet, Compacted, levelName(l))
 		if l > level {
+			dst := path.Join(fileSet, Compacted, levelName(l))
 			if err := copyObject(ctx, s.objC, src, dst); err != nil {
 				return err
 			}
