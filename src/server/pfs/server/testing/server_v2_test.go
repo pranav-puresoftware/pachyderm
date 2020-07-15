@@ -21,7 +21,6 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/pkg/serviceenv"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/chunk"
 	"github.com/pachyderm/pachyderm/src/server/pkg/testpachd"
-	"github.com/pachyderm/pachyderm/src/server/pkg/testutil"
 	tu "github.com/pachyderm/pachyderm/src/server/pkg/testutil"
 	"github.com/pachyderm/pachyderm/src/server/pkg/uuid"
 	"golang.org/x/net/context"
@@ -32,7 +31,6 @@ import (
 type loadConfig struct {
 	pachdConfig *serviceenv.PachdFullConfiguration
 	branchGens  []branchGenerator
-	t           *testing.T
 }
 
 func newLoadConfig(opts ...loadConfigOption) *loadConfig {
@@ -209,7 +207,6 @@ func newCommitGenerator(opts ...commitGeneratorOption) commitGenerator {
 }
 
 type commitConfig struct {
-	t                                        *testing.T
 	count                                    int
 	putTarGens                               []putTarGenerator
 	putThroughputConfig, getThroughputConfig *throughputConfig
@@ -496,7 +493,7 @@ func TestLoad(t *testing.T) {
 	if os.Getenv("CI") == "true" {
 		t.SkipNow()
 	}
-	msg := testutil.SeedRand()
+	msg := tu.SeedRand()
 	require.NoError(t, testLoad(t, fuzzLoad()), msg)
 }
 
@@ -875,6 +872,10 @@ func TestInspectFileV2(t *testing.T) {
 }
 
 func TestCopyFile2(t *testing.T) {
+	// TODO: remove once postgres runs in CI
+	if os.Getenv("CI") == "true" {
+		t.SkipNow()
+	}
 	conf := newPachdConfig()
 	err := testpachd.WithRealEnv(func(env *testpachd.RealEnv) error {
 		ctx := env.Context
