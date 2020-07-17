@@ -101,7 +101,7 @@ func newFileInfoV2FromFile(commit *pfs.Commit, fr fileset.FileReaderAPI) *pfs.Fi
 	}
 }
 
-// Reader iterates over FileInfoV2s generated from a fileset
+// Reader iterates over FileInfoV2s generated from a fileset.ReaderAPI
 type Reader struct {
 	commit *pfs.Commit
 	r1, r2 fileset.ReaderAPI
@@ -126,9 +126,16 @@ func NewReader(commit *pfs.Commit, getReader func() (fileset.ReaderAPI, error)) 
 }
 
 func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.FileReaderAPI) error) error {
-	//s1, _ := newStream(r.r1), newStream(r.r2)
+	s1, _ := newStream(r.r1), newStream(r.r2)
+	for {
+		fr, err := s1.Next()
+		if err != nil {
+			return err
+		}
+		if fr == nil {
+			return nil
+		}
 
-	return r.r1.Iterate(func(fr fileset.FileReaderAPI) error {
 		idx := fr.Index()
 		h := pfs.NewHash()
 		// TODO: handle directories
@@ -141,8 +148,10 @@ func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.F
 			File: client.NewFile(r.commit.Repo.Name, r.commit.ID, idx.Path),
 			Hash: pfs.EncodeHash(h.Sum(nil)),
 		}
-		return cb(finfo, fr)
-	})
+		if err := cb(finfo, fr); err != nil {
+			return err
+		}
+	}
 }
 
 type stream struct {
@@ -164,29 +173,27 @@ func newStream(r fileset.ReaderAPI) *stream {
 	}
 	go func() {
 		if err := s.r.Iterate(func(fr fileset.FileReaderAPI) error {
+			s.errs <- nil
 			s.readers <- fr
-			s.readers <- nil
 			return nil
 		}); err != nil {
 			s.errs <- err
 		}
-		s.isDone = true
 		close(s.readers)
 		close(s.errs)
 	}()
 	return s
 }
 
-func (s stream) pullOne() {
-	next := <-s.readers
+func (s *stream) pullOne() {
 	err := <-s.errs
-	if !s.isDone {
-		s.next = next
-		s.err = err
+	next, stillOpen := <-s.readers
+	if stillOpen {
+		s.next, s.err = next, err
 	}
 }
 
-func (s stream) Peek() *index.Index {
+func (s *stream) Peek() *index.Index {
 	if s.next == nil {
 		s.pullOne()
 	}
@@ -196,7 +203,7 @@ func (s stream) Peek() *index.Index {
 	return s.next.Index()
 }
 
-func (s stream) Next() (fileset.FileReaderAPI, error) {
+func (s *stream) Next() (fileset.FileReaderAPI, error) {
 	if s.next == nil {
 		s.pullOne()
 	}
