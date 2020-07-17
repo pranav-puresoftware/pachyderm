@@ -11,6 +11,7 @@ type FileReaderAPI interface {
 	Index() *index.Index
 	Header() (*tar.Header, error)
 	Get(w io.Writer) error
+	GetContents(w io.Writer) error
 }
 
 var _ FileReaderAPI = &FileMergeReader{}

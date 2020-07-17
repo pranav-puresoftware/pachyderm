@@ -3,6 +3,8 @@ package fileset
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/pachyderm/pachyderm/src/server/pkg/obj"
@@ -87,11 +89,15 @@ func (fr *FileReader) Index() *index.Index {
 func (fr *FileReader) Header() (*tar.Header, error) {
 	if fr.hdr == nil {
 		buf := &bytes.Buffer{}
-		if err := fr.cr.NextTagReader().Get(buf); err != nil {
+		if err := fr.cr.Get(buf); err != nil {
 			return nil, err
 		}
 		var err error
 		fr.hdr, err = tar.NewReader(buf).Next()
+		if err == io.EOF {
+			fmt.Println(fr.idx)
+			panic(err)
+		}
 		return fr.hdr, err
 	}
 	return fr.hdr, nil
@@ -116,4 +122,9 @@ func (fr *FileReader) Iterate(f func(*chunk.DataReader) error, tagUpperBound ...
 // Get writes the file.
 func (fr *FileReader) Get(w io.Writer) error {
 	return fr.cr.Get(w)
+}
+
+// GetContents writes the contents of the file excluding the header to w.
+func (fr *FileReader) GetContents(w io.Writer) error {
+	return errors.New("FileReader.GetContents not implemented")
 }

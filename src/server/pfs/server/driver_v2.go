@@ -1,7 +1,6 @@
 package server
 
 import (
-	"hash"
 	"io"
 	"log"
 	"path"
@@ -188,35 +187,51 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 	if err := d.checkIsAuthorized(pachClient, file.Commit.Repo, auth.Scope_READER); err != nil {
 		return err
 	}
-	// exact match
 	name := strings.TrimRight(file.Path, "/")
-	mr, err := d.storage.NewMergeReader(ctx, []string{commitKey(file.Commit)}, index.WithRange(&index.PathRange{Lower: name, Upper: name}))
+	// exact match
+	getExact := func() (fileset.ReaderAPI, error) {
+		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)})
+		if err != nil {
+			return nil, err
+		}
+		return &fileset.HeaderFilter{
+			F: func(th *tar.Header) bool {
+				return !th.FileInfo().IsDir() && th.Name == name
+			},
+			R: mr,
+		}, nil
+	}
+	// children
+	getChildren := func() (fileset.ReaderAPI, error) {
+		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)}, index.WithPrefix(name+"/"))
+		if err != nil {
+			return nil, err
+		}
+		children := &fileset.HeaderFilter{
+			F: func(th *tar.Header) bool {
+				return path.Dir(th.Name) == name && th.Name != name+"/"
+			},
+			R: mr,
+		}
+		return children, nil
+	}
+	// create readers
+	exact, err := NewReader(file.Commit, getExact)
 	if err != nil {
 		return err
 	}
-	exact := &fileset.HeaderFilter{
-		F: func(th *tar.Header) bool {
-			return !th.FileInfo().IsDir() && name == name
-		},
-		R: mr,
-	}
-	mr, err = d.storage.NewMergeReader(ctx, []string{commitKey(file.Commit)}, index.WithPrefix(name+"/"))
+	children, err := NewReader(file.Commit, getChildren)
 	if err != nil {
 		return err
 	}
-	children := &fileset.HeaderFilter{
-		F: func(th *tar.Header) bool {
-			return path.Dir(th.Name) == name
-		},
-		R: mr,
-	}
-	if err := exact.Iterate(func(fr fileset.FileReaderAPI) error {
-		return cb(newFileInfoV2FromFile(file.Commit, fr))
+	// iterate
+	if err := exact.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.FileReaderAPI) error {
+		return cb(finfo)
 	}); err != nil {
 		return err
 	}
-	if err := children.Iterate(func(fr fileset.FileReaderAPI) error {
-		return cb(newFileInfoV2FromFile(file.Commit, fr))
+	if err := children.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.FileReaderAPI) error {
+		return cb(finfo)
 	}); err != nil {
 		return err
 	}
@@ -306,80 +321,6 @@ func matchFunc(glob string) (func(string) bool, error) {
 	return func(s string) bool {
 		return g.Match(s) && (parentG == nil || !parentG.Match(s))
 	}, nil
-}
-
-// FileReader is a PFS wrapper for a fileset.MergeReader.
-// The primary purpose of this abstraction is to convert from index.Index to
-// pfs.FileInfo and to convert a set of index hashes to a file hash.
-type FileReader struct {
-	file      *pfs.File
-	idx       *index.Index
-	fmr       *fileset.FileMergeReader
-	mr        *fileset.MergeReader
-	fileCount int
-	hash      hash.Hash
-}
-
-func newFileReader(file *pfs.File, idx *index.Index, fmr *fileset.FileMergeReader, mr *fileset.MergeReader) *FileReader {
-	h := pfs.NewHash()
-	for _, dataRef := range idx.DataOp.DataRefs {
-		// TODO Pull from chunk hash.
-		h.Write([]byte(dataRef.Hash))
-	}
-	return &FileReader{
-		file: file,
-		idx:  idx,
-		fmr:  fmr,
-		mr:   mr,
-		hash: h,
-	}
-}
-
-func (fr *FileReader) updateFileInfo(idx *index.Index) {
-	fr.fileCount++
-	for _, dataRef := range idx.DataOp.DataRefs {
-		fr.hash.Write([]byte(dataRef.Hash))
-	}
-}
-
-// Info returns the info for the file.
-func (fr *FileReader) Info() *pfs.FileInfoV2 {
-	return &pfs.FileInfoV2{
-		File: fr.file,
-		Hash: pfs.EncodeHash(fr.hash.Sum(nil)),
-	}
-}
-
-// Get writes a tar stream that contains the file.
-func (fr *FileReader) Get(w io.Writer, noPadding ...bool) error {
-	if err := fr.fmr.Get(w); err != nil {
-		return err
-	}
-	for fr.fileCount > 0 {
-		fmr, err := fr.mr.Next()
-		if err != nil {
-			return err
-		}
-		if err := fmr.Get(w); err != nil {
-			return err
-		}
-		fr.fileCount--
-	}
-	if len(noPadding) > 0 && noPadding[0] {
-		return nil
-	}
-	// Close a tar writer to create tar EOF padding.
-	return tar.NewWriter(w).Close()
-}
-
-func (fr *FileReader) drain() error {
-	for fr.fileCount > 0 {
-		if _, err := fr.mr.Next(); err != nil {
-			return err
-		}
-		fr.fileCount--
-	}
-	return nil
 }
 
 func (d *driverV2) compact(master *work.Master, outputPath string, inputPrefixes []string) error {
@@ -565,17 +506,6 @@ func (d *driverV2) globFileV2(pachClient *client.APIClient, commit *pfs.Commit, 
 	})
 }
 
-func newFileInfoV2FromFile(commit *pfs.Commit, fr fileset.FileReaderAPI) *pfs.FileInfoV2 {
-	idx := fr.Index()
-	h := pfs.NewHash()
-	if idx.DataOp != nil {
-		for _, dataRef := range idx.DataOp.DataRefs {
-			h.Write([]byte(dataRef.Hash))
-		}
-	}
-
-	return &pfs.FileInfoV2{
-		File: client.NewFile(commit.Repo.Name, commit.ID, idx.Path),
-		Hash: pfs.EncodeHash(h.Sum(nil)),
-	}
+func compactedCommitPath(commit *pfs.Commit) string {
+	return path.Join(commitKey(commit), fileset.Compacted)
 }

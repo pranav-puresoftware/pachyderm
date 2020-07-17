@@ -237,7 +237,7 @@ func TestCompaction(t *testing.T) {
 		// Compact the files.
 		require.NoError(t, fileSets.Compact(context.Background(), path.Join(testPath, Compacted), []string{testPath}), msg)
 		// Check the files.
-		r := fileSets.newReader(context.Background(), path.Join(testPath, Compacted))
+		r := fileSets.NewReader(context.Background(), path.Join(testPath, Compacted))
 		require.NoError(t, r.iterate(func(fr *FileReader) error {
 			checkFile(t, fr, files[0], msg)
 			files = files[1:]

@@ -284,6 +284,11 @@ func (fmr *FileMergeReader) Get(w io.Writer) error {
 	return tw.Flush()
 }
 
+// GetContent writes the content of the current file excluding the header to w
+func (fmr *FileMergeReader) GetContents(w io.Writer) error {
+	return fmr.tsmr.Get(w)
+}
+
 // TagSetMergeReader returns the tagset merge reader for the file.
 // This is how you would get just the data in the file (excludes the tar
 // header and padding).

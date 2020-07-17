@@ -82,33 +82,37 @@ func (s *Storage) New(ctx context.Context, fileSet, defaultTag string, opts ...O
 
 // NewWriter makes a Writer backed by the path `fileSet` in object storage.
 func (s *Storage) NewWriter(ctx context.Context, fileSet string, opts ...WriterOption) *Writer {
+	fileSet = applyPrefix(fileSet)
 	return s.newWriter(ctx, fileSet, opts...)
+}
+
+func (s *Storage) newWriter(ctx context.Context, fileSet string, opts ...WriterOption) *Writer {
+	return newWriter(ctx, s.objC, s.chunks, fileSet, opts...)
 }
 
 // NewReader makes a Reader backed by the path `fileSet` in object storage.
 func (s *Storage) NewReader(ctx context.Context, fileSet string, opts ...index.Option) *Reader {
-	return s.newReader(ctx, fileSet, opts...)
-}
-
-func (s *Storage) newWriter(ctx context.Context, fileSet string, opts ...WriterOption) *Writer {
 	fileSet = applyPrefix(fileSet)
-	return newWriter(ctx, s.objC, s.chunks, fileSet, opts...)
+	return s.newReader(ctx, fileSet, opts...)
 }
 
 // TODO Expose some notion of read ahead (read a certain number of chunks in parallel).
 // this will be necessary to speed up reading large files.
 func (s *Storage) newReader(ctx context.Context, fileSet string, opts ...index.Option) *Reader {
-	fileSet = applyPrefix(fileSet)
 	return newReader(ctx, s.objC, s.chunks, fileSet, opts...)
 }
 
 // NewMergeReader returns a merge reader for a set for filesets.
 func (s *Storage) NewMergeReader(ctx context.Context, fileSets []string, opts ...index.Option) (*MergeReader, error) {
 	fileSets = applyPrefixes(fileSets)
+	return s.newMergeReader(ctx, fileSets, opts...)
+}
+
+func (s *Storage) newMergeReader(ctx context.Context, fileSets []string, opts ...index.Option) (*MergeReader, error) {
 	var rs []*Reader
 	for _, fileSet := range fileSets {
 		if err := s.objC.Walk(ctx, fileSet, func(name string) error {
-			rs = append(rs, s.NewReader(ctx, name, opts...))
+			rs = append(rs, s.newReader(ctx, name, opts...))
 			return nil
 		}); err != nil {
 			return nil, err
@@ -135,7 +139,7 @@ func (s *Storage) ResolveIndexes(ctx context.Context, fileSets []string, f func(
 // for creating shards).
 func (s *Storage) Shard(ctx context.Context, fileSets []string, shardFunc ShardFunc) error {
 	fileSets = applyPrefixes(fileSets)
-	mr, err := s.NewMergeReader(ctx, fileSets)
+	mr, err := s.newMergeReader(ctx, fileSets)
 	if err != nil {
 		return err
 	}
@@ -147,7 +151,7 @@ func (s *Storage) Compact(ctx context.Context, outputFileSet string, inputFileSe
 	outputFileSet = applyPrefix(outputFileSet)
 	inputFileSets = applyPrefixes(inputFileSets)
 	w := s.newWriter(ctx, outputFileSet)
-	mr, err := s.NewMergeReader(ctx, inputFileSets, opts...)
+	mr, err := s.newMergeReader(ctx, inputFileSets, opts...)
 	if err != nil {
 		return err
 	}

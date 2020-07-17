@@ -716,7 +716,7 @@ func TestListFileV2(t *testing.T) {
 		require.NoError(t, err)
 
 		finfos := []*pfs.FileInfoV2{}
-		err = env.PachClient.ListFileV2(repo, commit1.ID, "/dir1/*", func(finfo *pfs.FileInfoV2) error {
+		err = env.PachClient.ListFileV2(repo, commit1.ID, "/dir1", func(finfo *pfs.FileInfoV2) error {
 			finfos = append(finfos, finfo)
 			return nil
 		})
