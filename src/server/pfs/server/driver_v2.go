@@ -194,7 +194,12 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 		if err != nil {
 			return nil, err
 		}
-		return mr, nil
+		return &fileset.IndexFilter{
+			F: func(idx *index.Index) bool {
+				return idx.Path == name
+			},
+			R: mr,
+		}, nil
 	}
 	// children
 	getChildren := func() (fileset.FileSource, error) {
@@ -219,7 +224,7 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 		return err
 	}
 	if err := children.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.File) error {
-		if finfo.File.Path != name+"/" {
+		if pathIsChild(name, finfo.File.Path) {
 			return cb(finfo)
 		}
 		return nil

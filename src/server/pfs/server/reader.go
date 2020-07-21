@@ -170,7 +170,7 @@ func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
 			if !strings.HasPrefix(idx2.Path, x) {
 				break
 			}
-			childHash, err := computeHash(cache, s, idx.Path)
+			childHash, err := computeHash(cache, s, idx2.Path)
 			if err != nil {
 				return nil, err
 			}

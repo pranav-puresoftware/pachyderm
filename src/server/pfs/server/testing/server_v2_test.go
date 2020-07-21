@@ -714,7 +714,7 @@ func TestListFileV2(t *testing.T) {
 
 		err = env.PachClient.FinishCommit(repo, commit1.ID)
 		require.NoError(t, err)
-
+		// should list a directory but not siblings
 		finfos := []*pfs.FileInfoV2{}
 		err = env.PachClient.ListFileV2(repo, commit1.ID, "/dir1", func(finfo *pfs.FileInfoV2) error {
 			finfos = append(finfos, finfo)
@@ -722,6 +722,15 @@ func TestListFileV2(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.ElementsEqual(t, []string{"/dir1/file1.1", "/dir1/file1.2"}, finfosToPaths(finfos))
+		// should list the root
+		finfos = []*pfs.FileInfoV2{}
+		err = env.PachClient.ListFileV2(repo, commit1.ID, "/", func(finfo *pfs.FileInfoV2) error {
+			finfos = append(finfos, finfo)
+			return nil
+		})
+		require.NoError(t, err)
+		require.ElementsEqual(t, []string{"/dir1/", "/dir2/"}, finfosToPaths(finfos))
+
 		return nil
 	}, config))
 }
