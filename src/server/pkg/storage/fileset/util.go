@@ -28,6 +28,8 @@ func CopyFiles(w *Writer, r FileSource) error {
 	}
 }
 
+// WriteTarEntry writes an tar entry for f to w
+// It does not flush the *tar.Writer.
 func WriteTarEntry(w io.Writer, f File) error {
 	h, err := f.Header()
 	if err != nil {

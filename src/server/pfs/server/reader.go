@@ -104,7 +104,6 @@ func NewReader(commit *pfs.Commit, getReader func() (fileset.FileSource, error))
 }
 
 func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.File) error) error {
-	// create 2 identical readers
 	r1, err := r.getReader()
 	if err != nil {
 		return err
