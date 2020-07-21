@@ -7,15 +7,15 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/tar"
 )
 
-var _ ReaderAPI = &HeaderFilter{}
+var _ FileSource = &HeaderFilter{}
 
 type HeaderFilter struct {
 	F func(th *tar.Header) bool
-	R ReaderAPI
+	R FileSource
 }
 
-func (hf *HeaderFilter) Iterate(cb func(FileReaderAPI) error, stopBefore ...string) error {
-	return hf.R.Iterate(func(fr FileReaderAPI) error {
+func (hf *HeaderFilter) Iterate(cb func(File) error, stopBefore ...string) error {
+	return hf.R.Iterate(func(fr File) error {
 		th, err := fr.Header()
 		if err != nil {
 			return err
@@ -27,15 +27,30 @@ func (hf *HeaderFilter) Iterate(cb func(FileReaderAPI) error, stopBefore ...stri
 	}, stopBefore...)
 }
 
-var _ ReaderAPI = &HeaderMapper{}
+type IndexFilter struct {
+	F func(idx *index.Index) bool
+	R FileSource
+}
+
+func (fil *IndexFilter) Iterate(cb func(File) error, stopBefore ...string) error {
+	return fil.R.Iterate(func(fr File) error {
+		idx := fr.Index()
+		if fil.F(idx) {
+			cb(fr)
+		}
+		return nil
+	})
+}
+
+var _ FileSource = &HeaderMapper{}
 
 type HeaderMapper struct {
 	F func(th *tar.Header) *tar.Header
-	R ReaderAPI
+	R FileSource
 }
 
-func (hm *HeaderMapper) Iterate(cb func(FileReaderAPI) error, stopBefore ...string) error {
-	return hm.R.Iterate(func(fr FileReaderAPI) error {
+func (hm *HeaderMapper) Iterate(cb func(File) error, stopBefore ...string) error {
+	return hm.R.Iterate(func(fr File) error {
 		x, err := fr.Header()
 		if err != nil {
 			return err
@@ -48,11 +63,11 @@ func (hm *HeaderMapper) Iterate(cb func(FileReaderAPI) error, stopBefore ...stri
 	})
 }
 
-var _ FileReaderAPI = headerMap{}
+var _ File = headerMap{}
 
 type headerMap struct {
 	header *tar.Header
-	inner  FileReaderAPI
+	inner  File
 }
 
 func (hm headerMap) Index() *index.Index {
@@ -69,12 +84,12 @@ func (hm headerMap) Get(w io.Writer) error {
 	if err := tw.WriteHeader(hm.header); err != nil {
 		return err
 	}
-	if err := hm.inner.GetContents(w); err != nil {
+	if err := hm.inner.Content(w); err != nil {
 		return err
 	}
 	return tw.Flush()
 }
 
-func (hm headerMap) GetContents(w io.Writer) error {
-	return hm.inner.GetContents(w)
+func (hm headerMap) Content(w io.Writer) error {
+	return hm.inner.Content(w)
 }

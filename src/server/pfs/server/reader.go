@@ -3,9 +3,11 @@ package server
 import (
 	"hash"
 	"io"
+	"strings"
 
 	"github.com/pachyderm/pachyderm/src/client"
 	"github.com/pachyderm/pachyderm/src/client/pfs"
+	"github.com/pachyderm/pachyderm/src/client/pkg/errors"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/index"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/tar"
@@ -86,47 +88,35 @@ func (fr *FileReader) drain() error {
 	return nil
 }
 
-func newFileInfoV2FromFile(commit *pfs.Commit, fr fileset.FileReaderAPI) *pfs.FileInfoV2 {
-	idx := fr.Index()
-	h := pfs.NewHash()
-	if idx.DataOp != nil {
-		for _, dataRef := range idx.DataOp.DataRefs {
-			h.Write([]byte(dataRef.Hash))
-		}
-	}
-
-	return &pfs.FileInfoV2{
-		File: client.NewFile(commit.Repo.Name, commit.ID, idx.Path),
-		Hash: pfs.EncodeHash(h.Sum(nil)),
-	}
-}
-
 // Reader iterates over FileInfoV2s generated from a fileset.ReaderAPI
 type Reader struct {
-	commit *pfs.Commit
-	r1, r2 fileset.ReaderAPI
+	commit    *pfs.Commit
+	getReader func() (fileset.FileSource, error)
 }
 
 // Creates a Reader which emits FileInfoV2s with the information from commit, and the entries from readers
 // returned by getReader.  If getReader returns different Readers all bets are off.
-func NewReader(commit *pfs.Commit, getReader func() (fileset.ReaderAPI, error)) (*Reader, error) {
-	r1, err := getReader()
-	if err != nil {
-		return nil, err
-	}
-	r2, err := getReader()
-	if err != nil {
-		return nil, err
-	}
+func NewReader(commit *pfs.Commit, getReader func() (fileset.FileSource, error)) *Reader {
 	return &Reader{
-		commit: commit,
-		r1:     r1,
-		r2:     r2,
-	}, nil
+		commit:    commit,
+		getReader: getReader,
+	}
 }
 
-func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.FileReaderAPI) error) error {
-	s1, _ := newStream(r.r1), newStream(r.r2)
+func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.File) error) error {
+	// create 2 identical readers
+	r1, err := r.getReader()
+	if err != nil {
+		return err
+	}
+	r2, err := r.getReader()
+	if err != nil {
+		return err
+	}
+	s1, s2 := newStream(r1), newStream(r2)
+	defer s1.Close()
+	defer s2.Close()
+	cache := make(map[string][]byte)
 	for {
 		fr, err := s1.Next()
 		if err != nil {
@@ -135,44 +125,89 @@ func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.F
 		if fr == nil {
 			return nil
 		}
-
 		idx := fr.Index()
-		h := pfs.NewHash()
-		// TODO: handle directories
+		hashBytes, err := computeHash(cache, s2, idx.Path)
+		if err != nil {
+			return err
+		}
+		finfo := &pfs.FileInfoV2{
+			File: client.NewFile(r.commit.Repo.Name, r.commit.ID, idx.Path),
+			Hash: pfs.EncodeHash(hashBytes),
+		}
+		if err := cb(finfo, fr); err != nil {
+			return err
+		}
+		delete(cache, idx.Path)
+	}
+}
+
+func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
+	if hashBytes, exists := cache[x]; exists {
+		return hashBytes, nil
+	}
+	// check that the next item in the stream is x
+	idx := s.Peek()
+	if idx == nil {
+		return nil, errors.Errorf("stream is done, can't compute hash for %s", x)
+	}
+	if idx.Path != x {
+		return nil, errors.Errorf("stream is is wrong place to compute hash for %s", x)
+	}
+	// consume x from the stream
+	fr, err := s.Next()
+	if err != nil {
+		return nil, err
+	}
+	idx = fr.Index()
+	h := pfs.NewHash()
+	if indexIsDir(idx) {
+		// for directory
+		for {
+			idx2 := s.Peek()
+			if idx2 == nil {
+				break
+			}
+			if !strings.HasPrefix(idx2.Path, x) {
+				break
+			}
+			childHash, err := computeHash(cache, s, idx.Path)
+			if err != nil {
+				return nil, err
+			}
+			h.Write(childHash)
+		}
+	} else {
+		// for file
 		if idx.DataOp != nil {
 			for _, dataRef := range idx.DataOp.DataRefs {
 				h.Write([]byte(dataRef.Hash))
 			}
 		}
-		finfo := &pfs.FileInfoV2{
-			File: client.NewFile(r.commit.Repo.Name, r.commit.ID, idx.Path),
-			Hash: pfs.EncodeHash(h.Sum(nil)),
-		}
-		if err := cb(finfo, fr); err != nil {
-			return err
-		}
 	}
+	hashBytes := h.Sum(nil)
+	cache[x] = hashBytes
+	return hashBytes, nil
 }
 
 type stream struct {
-	r fileset.ReaderAPI
+	r fileset.FileSource
 
-	readers chan fileset.FileReaderAPI
+	readers chan fileset.File
 	errs    chan error
 
-	next   fileset.FileReaderAPI
+	next   fileset.File
 	err    error
 	isDone bool
 }
 
-func newStream(r fileset.ReaderAPI) *stream {
+func newStream(r fileset.FileSource) *stream {
 	s := &stream{
 		r:       r,
-		readers: make(chan fileset.FileReaderAPI),
+		readers: make(chan fileset.File),
 		errs:    make(chan error),
 	}
 	go func() {
-		if err := s.r.Iterate(func(fr fileset.FileReaderAPI) error {
+		if err := s.r.Iterate(func(fr fileset.File) error {
 			s.errs <- nil
 			s.readers <- fr
 			return nil
@@ -203,11 +238,27 @@ func (s *stream) Peek() *index.Index {
 	return s.next.Index()
 }
 
-func (s *stream) Next() (fileset.FileReaderAPI, error) {
+func (s *stream) Next() (fileset.File, error) {
 	if s.next == nil {
 		s.pullOne()
 	}
 	ret, err := s.next, s.err
 	s.next, s.err = nil, nil
 	return ret, err
+}
+
+func (s *stream) Close() error {
+	for {
+		fr, err := s.Next()
+		if err != nil {
+			return err
+		}
+		if fr == nil {
+			return nil
+		}
+	}
+}
+
+func indexIsDir(idx *index.Index) bool {
+	return strings.HasSuffix(idx.Path, "/")
 }

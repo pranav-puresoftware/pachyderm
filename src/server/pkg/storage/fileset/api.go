@@ -7,19 +7,18 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/tar"
 )
 
-type FileReaderAPI interface {
+type File interface {
 	Index() *index.Index
 	Header() (*tar.Header, error)
-	Get(w io.Writer) error
-	GetContents(w io.Writer) error
+	Content(w io.Writer) error
 }
 
-var _ FileReaderAPI = &FileMergeReader{}
-var _ FileReaderAPI = &FileReader{}
+var _ File = &FileMergeReader{}
+var _ File = &FileReader{}
 
-type ReaderAPI interface {
-	Iterate(cb func(FileReaderAPI) error, stopBefore ...string) error
+type FileSource interface {
+	Iterate(cb func(File) error, stopBefore ...string) error
 }
 
-var _ ReaderAPI = &MergeReader{}
-var _ ReaderAPI = &Reader{}
+var _ FileSource = &MergeReader{}
+var _ FileSource = &Reader{}

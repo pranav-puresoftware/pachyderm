@@ -46,7 +46,7 @@ func (r *Reader) Next() (*FileReader, error) {
 
 // Iterate iterates over the file readers in the fileset.
 // pathBound is an optional parameter for specifiying the upper bound (exclusive) of the iteration.
-func (r *Reader) Iterate(f func(FileReaderAPI) error, pathBound ...string) error {
+func (r *Reader) Iterate(f func(File) error, pathBound ...string) error {
 	return r.iterate(func(fr *FileReader) error {
 		return f(fr)
 	})
@@ -61,7 +61,7 @@ func (r *Reader) iterate(f func(*FileReader) error, pathBound ...string) error {
 
 // Get writes the fileset.
 func (r *Reader) Get(w io.Writer) error {
-	return r.Iterate(func(fr FileReaderAPI) error {
+	return r.iterate(func(fr *FileReader) error {
 		return fr.Get(w)
 	})
 }
@@ -89,14 +89,14 @@ func (fr *FileReader) Index() *index.Index {
 func (fr *FileReader) Header() (*tar.Header, error) {
 	if fr.hdr == nil {
 		buf := &bytes.Buffer{}
-		if err := fr.cr.Get(buf); err != nil {
+		if err := fr.cr.NextTagReader().Get(buf); err != nil {
 			return nil, err
 		}
 		var err error
 		fr.hdr, err = tar.NewReader(buf).Next()
 		if err == io.EOF {
 			fmt.Println(fr.idx)
-			panic(err)
+			//panic(err)
 		}
 		return fr.hdr, err
 	}
@@ -121,10 +121,13 @@ func (fr *FileReader) Iterate(f func(*chunk.DataReader) error, tagUpperBound ...
 
 // Get writes the file.
 func (fr *FileReader) Get(w io.Writer) error {
+	if _, err := fr.Header(); err != nil {
+		return err
+	}
 	return fr.cr.Get(w)
 }
 
 // GetContents writes the contents of the file excluding the header to w.
-func (fr *FileReader) GetContents(w io.Writer) error {
+func (fr *FileReader) Content(w io.Writer) error {
 	return errors.New("FileReader.GetContents not implemented")
 }

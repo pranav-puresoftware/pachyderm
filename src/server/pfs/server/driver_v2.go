@@ -189,49 +189,40 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 	}
 	name := strings.TrimRight(file.Path, "/")
 	// exact match
-	getExact := func() (fileset.ReaderAPI, error) {
-		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)})
+	getExact := func() (fileset.FileSource, error) {
+		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)}, index.WithExact(name))
 		if err != nil {
 			return nil, err
 		}
-		return &fileset.HeaderFilter{
-			F: func(th *tar.Header) bool {
-				return !th.FileInfo().IsDir() && th.Name == name
-			},
-			R: mr,
-		}, nil
+		return mr, nil
 	}
 	// children
-	getChildren := func() (fileset.ReaderAPI, error) {
+	getChildren := func() (fileset.FileSource, error) {
 		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)}, index.WithPrefix(name+"/"))
 		if err != nil {
 			return nil, err
 		}
-		children := &fileset.HeaderFilter{
-			F: func(th *tar.Header) bool {
-				return path.Dir(th.Name) == name && th.Name != name+"/"
+		return &fileset.IndexFilter{
+			F: func(idx *index.Index) bool {
+				return idx.Path != name+"/"
 			},
 			R: mr,
-		}
-		return children, nil
+		}, nil
 	}
 	// create readers
-	exact, err := NewReader(file.Commit, getExact)
-	if err != nil {
-		return err
-	}
-	children, err := NewReader(file.Commit, getChildren)
-	if err != nil {
-		return err
-	}
+	exact := NewReader(file.Commit, getExact)
+	children := NewReader(file.Commit, getChildren)
 	// iterate
-	if err := exact.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.FileReaderAPI) error {
+	if err := exact.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.File) error {
 		return cb(finfo)
 	}); err != nil {
 		return err
 	}
-	if err := children.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.FileReaderAPI) error {
-		return cb(finfo)
+	if err := children.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.File) error {
+		if finfo.File.Path != name+"/" {
+			return cb(finfo)
+		}
+		return nil
 	}); err != nil {
 		return err
 	}

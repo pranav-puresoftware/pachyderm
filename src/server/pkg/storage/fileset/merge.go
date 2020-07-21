@@ -30,7 +30,7 @@ func newMergeReader(rs []*Reader) *MergeReader {
 }
 
 // Iterate iterates over the file merge readers in the merged fileset.
-func (mr *MergeReader) Iterate(f func(FileReaderAPI) error, stopBefore ...string) error {
+func (mr *MergeReader) Iterate(f func(File) error, stopBefore ...string) error {
 	return mr.iterate(func(fmr *FileMergeReader) error {
 		return f(fmr)
 	})
@@ -165,7 +165,7 @@ func (mr *MergeReader) WriteTo(w *Writer) error {
 // Get writes the merged fileset.
 func (mr *MergeReader) Get(w io.Writer) error {
 	// Write a tar entry for each file merge reader.
-	if err := mr.Iterate(func(fmr FileReaderAPI) error {
+	if err := mr.iterate(func(fmr *FileMergeReader) error {
 		return fmr.Get(w)
 	}); err != nil {
 		return err
@@ -285,7 +285,7 @@ func (fmr *FileMergeReader) Get(w io.Writer) error {
 }
 
 // GetContent writes the content of the current file excluding the header to w
-func (fmr *FileMergeReader) GetContents(w io.Writer) error {
+func (fmr *FileMergeReader) Content(w io.Writer) error {
 	return fmr.tsmr.Get(w)
 }
 
