@@ -24,6 +24,7 @@ import (
 	"github.com/pachyderm/pachyderm/src/server/pkg/testpachd"
 	"github.com/pachyderm/pachyderm/src/server/pkg/testutil"
 	"github.com/pachyderm/pachyderm/src/server/pkg/uuid"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 	"modernc.org/mathutil"
@@ -185,7 +186,7 @@ func newCommitGenerator(opts ...commitGeneratorOption) commitGenerator {
 				return err
 			}
 			getTar := func(c *client.APIClient) error {
-				r, err := c.GetTarV2(repo, commit.ID, "/")
+				r, err := c.GetTarV2(repo, commit.ID, "**")
 				if err != nil {
 					return err
 				}
@@ -733,6 +734,49 @@ func TestListFileV2(t *testing.T) {
 
 		return nil
 	}, config))
+}
+
+func TestGlobFileV2(t *testing.T) {
+	// TODO: remove once postgres runs in CI
+	if os.Getenv("CI") == "true" {
+		t.SkipNow()
+	}
+	config := newPachdConfig()
+	config.StorageV2 = true
+	err := testpachd.WithRealEnv(func(env *testpachd.RealEnv) error {
+		repo := "test"
+		require.NoError(t, env.PachClient.CreateRepo(repo))
+		commit1, err := env.PachClient.StartCommit(repo, "master")
+		require.NoError(t, err)
+		fsSpec := fileSetSpec{
+			"/dir1/file1.1": []byte{},
+			"/dir1/file1.2": []byte{},
+			"/dir2/file2.1": []byte{},
+			"/dir2/file2.2": []byte{},
+		}
+		err = env.PachClient.PutTarV2(repo, commit1.ID, fsSpec.makeTarStream())
+		require.NoError(t, err)
+		err = env.PachClient.FinishCommit(repo, commit1.ID)
+		require.NoError(t, err)
+		globFile := func(x string) []string {
+			ys := []string{}
+			client, err := env.PachClient.GlobFileV2(env.PachClient.Ctx(), &pfs.GlobFileRequest{
+				Commit:  commit1,
+				Pattern: x,
+			})
+			require.NoError(t, err)
+			for finfo, err := client.Recv(); err != io.EOF; finfo, err = client.Recv() {
+				require.NoError(t, err)
+				ys = append(ys, finfo.File.Path)
+			}
+			return ys
+		}
+		assert.ElementsMatch(t, []string{"/dir1/file1.2", "/dir2/file2.2"}, globFile("**.2"))
+		assert.ElementsMatch(t, []string{"/dir1/file1.1", "/dir1/file1.2"}, globFile("/dir1/*"))
+		assert.ElementsMatch(t, []string{"/dir1/", "/dir2/"}, globFile("/*"))
+		return nil
+	}, config)
+	require.NoError(t, err)
 }
 
 func TestCompaction(t *testing.T) {

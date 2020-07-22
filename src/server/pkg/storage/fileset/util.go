@@ -29,7 +29,6 @@ func CopyFiles(w *Writer, r FileSource) error {
 }
 
 // WriteTarEntry writes an tar entry for f to w
-// It does not flush the *tar.Writer.
 func WriteTarEntry(w io.Writer, f File) error {
 	h, err := f.Header()
 	if err != nil {
@@ -39,5 +38,21 @@ func WriteTarEntry(w io.Writer, f File) error {
 	if err := tw.WriteHeader(h); err != nil {
 		return err
 	}
-	return f.Content(tw)
+	if (h.Mode == tar.TypeReg || h.Mode == tar.TypeRegA) && h.Size > 0 {
+		if err := f.Content(tw); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+// WriteTarStream writes an entire tar stream to w
+// It will contain an entry for each File in fs
+func WriteTarStream(w io.Writer, fs FileSource) error {
+	if err := fs.Iterate(func(f File) error {
+		return WriteTarEntry(w, f)
+	}); err != nil {
+		return err
+	}
+	return tar.NewWriter(w).Close()
 }
