@@ -1,6 +1,7 @@
 package fileset
 
 import (
+	"context"
 	"io"
 
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/index"
@@ -22,8 +23,7 @@ var _ File = &FileReader{}
 
 type FileSource interface {
 	// Iterate calls cb for each File in the FileSource in lexigraphical order.
-	Iterate(cb func(File) error, stopBefore ...string) error
+	Iterate(ctx context.Context, cb func(File) error, stopBefore ...string) error
 }
 
-var _ FileSource = &MergeReader{}
-var _ FileSource = &Reader{}
+var _ FileSource = &mergeSource{}

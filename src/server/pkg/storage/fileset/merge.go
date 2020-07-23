@@ -1,6 +1,7 @@
 package fileset
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
 
@@ -523,4 +524,29 @@ func shard(mr *MergeReader, shardThreshold int64, f ShardFunc) error {
 		return err
 	}
 	return f(pathRange)
+}
+
+type mergeSource struct {
+	getReader func() (*MergeReader, error)
+	s         *Storage
+}
+
+func (ms *mergeSource) Iterate(ctx context.Context, cb func(File) error, stopBefore ...string) error {
+	mr, err := ms.getReader()
+	if err != nil {
+		return err
+	}
+	for {
+		f, err := mr.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+		if err := cb(f); err != nil {
+			return err
+		}
+	}
+	return nil
 }

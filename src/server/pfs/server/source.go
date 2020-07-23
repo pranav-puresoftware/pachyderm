@@ -88,56 +88,42 @@ func (fr *FileReader) drain() error {
 	return nil
 }
 
-// Reader iterates over FileInfoV2s generated from a fileset.ReaderAPI
-type Reader struct {
+// Source iterates over FileInfoV2s generated from a fileset.ReaderAPI
+type Source struct {
 	commit    *pfs.Commit
-	getReader func() (fileset.FileSource, error)
+	getReader func() fileset.FileSource
 }
 
 // Creates a Reader which emits FileInfoV2s with the information from commit, and the entries from readers
 // returned by getReader.  If getReader returns different Readers all bets are off.
-func NewReader(commit *pfs.Commit, getReader func() (fileset.FileSource, error)) *Reader {
-	return &Reader{
+func NewSource(commit *pfs.Commit, getReader func() fileset.FileSource) *Source {
+	return &Source{
 		commit:    commit,
 		getReader: getReader,
 	}
 }
 
-func (r *Reader) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.File) error) error {
-	r1, err := r.getReader()
-	if err != nil {
-		return err
-	}
-	r2, err := r.getReader()
-	if err != nil {
-		return err
-	}
-	s1, s2 := newStream(r1), newStream(r2)
-	defer s1.Close()
-	defer s2.Close()
+func (s *Source) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.File) error) error {
+	fs1 := s.getReader()
+	fs2 := s.getReader()
+	s2 := newStream(ctx, fs2)
 	cache := make(map[string][]byte)
-	for {
-		fr, err := s1.Next()
-		if err != nil {
-			return err
-		}
-		if fr == nil {
-			return nil
-		}
+	return fs1.Iterate(ctx, func(fr fileset.File) error {
 		idx := fr.Index()
 		hashBytes, err := computeHash(cache, s2, idx.Path)
 		if err != nil {
 			return err
 		}
 		finfo := &pfs.FileInfoV2{
-			File: client.NewFile(r.commit.Repo.Name, r.commit.ID, idx.Path),
+			File: client.NewFile(s.commit.Repo.Name, s.commit.ID, idx.Path),
 			Hash: pfs.EncodeHash(hashBytes),
 		}
 		if err := cb(finfo, fr); err != nil {
 			return err
 		}
 		delete(cache, idx.Path)
-	}
+		return nil
+	})
 }
 
 func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
@@ -145,15 +131,19 @@ func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
 		return hashBytes, nil
 	}
 	// check that the next item in the stream is x
-	idx := s.Peek()
-	if idx == nil {
-		return nil, errors.Errorf("stream is done, can't compute hash for %s", x)
+	fr, err := s.Peek()
+	if err != nil {
+		if err == io.EOF {
+			return nil, errors.Errorf("stream is done, can't compute hash for %s", x)
+		}
+		return nil, err
 	}
+	idx := fr.Index()
 	if idx.Path != x {
 		return nil, errors.Errorf("stream is is wrong place to compute hash for %s", x)
 	}
 	// consume x from the stream
-	fr, err := s.Next()
+	fr, err = s.Next()
 	if err != nil {
 		return nil, err
 	}
@@ -162,10 +152,14 @@ func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
 	if indexIsDir(idx) {
 		// for directory
 		for {
-			idx2 := s.Peek()
-			if idx2 == nil {
-				break
+			f2, err := s.Peek()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return nil, err
 			}
+			idx2 := f2.Index()
 			if !strings.HasPrefix(idx2.Path, x) {
 				break
 			}
@@ -189,72 +183,53 @@ func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
 }
 
 type stream struct {
-	r fileset.FileSource
-
-	readers chan fileset.File
-	errs    chan error
-
-	next   fileset.File
-	err    error
-	isDone bool
+	peek     fileset.File
+	fileChan chan fileset.File
+	errChan  chan error
 }
 
-func newStream(r fileset.FileSource) *stream {
-	s := &stream{
-		r:       r,
-		readers: make(chan fileset.File),
-		errs:    make(chan error),
-	}
+func newStream(ctx context.Context, source fileset.FileSource) *stream {
+	fileChan := make(chan fileset.File)
+	errChan := make(chan error, 1)
 	go func() {
-		if err := s.r.Iterate(func(fr fileset.File) error {
-			s.errs <- nil
-			s.readers <- fr
+		if err := source.Iterate(ctx, func(file fileset.File) error {
+			fileChan <- file
 			return nil
 		}); err != nil {
-			s.errs <- err
+			errChan <- err
+			return
 		}
-		close(s.readers)
-		close(s.errs)
+		close(fileChan)
 	}()
-	return s
-}
-
-func (s *stream) pullOne() {
-	err := <-s.errs
-	next, stillOpen := <-s.readers
-	if stillOpen {
-		s.next, s.err = next, err
+	return &stream{
+		fileChan: fileChan,
+		errChan:  errChan,
 	}
 }
 
-func (s *stream) Peek() *index.Index {
-	if s.next == nil {
-		s.pullOne()
+func (s *stream) Peek() (fileset.File, error) {
+	if s.peek != nil {
+		return s.peek, nil
 	}
-	if s.next == nil {
-		return nil
-	}
-	return s.next.Index()
+	var err error
+	s.peek, err = s.Next()
+	return s.peek, err
 }
 
 func (s *stream) Next() (fileset.File, error) {
-	if s.next == nil {
-		s.pullOne()
+	if s.peek != nil {
+		tmp := s.peek
+		s.peek = nil
+		return tmp, nil
 	}
-	ret, err := s.next, s.err
-	s.next, s.err = nil, nil
-	return ret, err
-}
-
-func (s *stream) Close() error {
-	for {
-		fr, err := s.Next()
-		if err != nil {
-			return err
+	select {
+	case file, more := <-s.fileChan:
+		if !more {
+			return nil, io.EOF
 		}
-		if fr == nil {
-			return nil
-		}
+		return file, nil
+	case err := <-s.errChan:
+		return nil, err
 	}
 }
 

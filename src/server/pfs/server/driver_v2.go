@@ -166,22 +166,15 @@ func (d *driverV2) withFileSet(ctx context.Context, repo, commit string, f func(
 }
 
 func (d *driverV2) getTar(ctx context.Context, commit *pfs.Commit, glob string, w io.Writer) error {
-	compactedPaths := []string{compactedCommitPath(commit)}
 	prefix := globLiteralPrefix(glob)
 	mf, err := matchFunc(glob)
 	if err != nil {
 		return err
 	}
-	mr, err := d.storage.NewMergeReader(ctx, compactedPaths, index.WithPrefix(prefix))
-	if err != nil {
-		return err
-	}
-	filter := &fileset.IndexFilter{
-		R: mr,
-		F: func(idx *index.Index) bool {
-			return mf(idx.Path)
-		},
-	}
+	s := d.storage.NewSource(ctx, compactedCommitPath(commit), index.WithPrefix(prefix))
+	filter := fileset.NewIndexFilter(s, func(idx *index.Index) bool {
+		return mf(idx.Path)
+	})
 	// TODO: remove absolute paths on the way out?
 	// nonAbsolute := &fileset.HeaderMapper{
 	// 	R: filter,
@@ -190,7 +183,7 @@ func (d *driverV2) getTar(ctx context.Context, commit *pfs.Commit, glob string, 
 	// 		return th
 	// 	},
 	// }
-	return fileset.WriteTarStream(w, filter)
+	return fileset.WriteTarStream(ctx, w, filter)
 }
 
 func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full bool, history int64, cb func(*pfs.FileInfoV2) error) error {
@@ -203,34 +196,22 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 	}
 	name := strings.TrimRight(file.Path, "/")
 	// exact match
-	getExact := func() (fileset.FileSource, error) {
-		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)}, index.WithExact(name))
-		if err != nil {
-			return nil, err
-		}
-		return &fileset.IndexFilter{
-			F: func(idx *index.Index) bool {
-				return idx.Path == name
-			},
-			R: mr,
-		}, nil
+	getExact := func() fileset.FileSource {
+		x := d.storage.NewSource(ctx, compactedCommitPath(file.Commit), index.WithExact(name))
+		return fileset.NewIndexFilter(x, func(idx *index.Index) bool {
+			return idx.Path == name
+		})
 	}
 	// children
-	getChildren := func() (fileset.FileSource, error) {
-		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(file.Commit)}, index.WithPrefix(name+"/"))
-		if err != nil {
-			return nil, err
-		}
-		return &fileset.IndexFilter{
-			F: func(idx *index.Index) bool {
-				return idx.Path != name+"/"
-			},
-			R: mr,
-		}, nil
+	getChildren := func() fileset.FileSource {
+		x := d.storage.NewSource(ctx, compactedCommitPath(file.Commit), index.WithPrefix(name+"/"))
+		return fileset.NewIndexFilter(x, func(idx *index.Index) bool {
+			return idx.Path != name+"/"
+		})
 	}
 	// create readers
-	exact := NewReader(file.Commit, getExact)
-	children := NewReader(file.Commit, getChildren)
+	exact := NewSource(file.Commit, getExact)
+	children := NewSource(file.Commit, getChildren)
 	// iterate
 	if err := exact.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.File) error {
 		return cb(finfo)
@@ -486,17 +467,11 @@ func (d *driverV2) globFileV2(pachClient *client.APIClient, commit *pfs.Commit, 
 	if err != nil {
 		return err
 	}
-	r := NewReader(commit, func() (fileset.FileSource, error) {
-		mr, err := d.storage.NewMergeReader(ctx, []string{compactedCommitPath(commit)}, index.WithPrefix(prefix))
-		if err != nil {
-			return nil, err
-		}
-		return &fileset.IndexFilter{
-			R: mr,
-			F: func(idx *index.Index) bool {
-				return mf(idx.Path)
-			},
-		}, nil
+	r := NewSource(commit, func() fileset.FileSource {
+		x := d.storage.NewSource(ctx, compactedCommitPath(commit), index.WithPrefix(prefix))
+		return fileset.NewIndexFilter(x, func(idx *index.Index) bool {
+			return mf(idx.Path)
+		})
 	})
 	return r.Iterate(ctx, func(finfo *pfs.FileInfoV2, f fileset.File) error {
 		return cb(finfo)

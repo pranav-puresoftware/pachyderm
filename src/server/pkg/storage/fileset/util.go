@@ -1,6 +1,7 @@
 package fileset
 
 import (
+	"context"
 	"io"
 
 	"github.com/pachyderm/pachyderm/src/client/pkg/errors"
@@ -48,8 +49,8 @@ func WriteTarEntry(w io.Writer, f File) error {
 
 // WriteTarStream writes an entire tar stream to w
 // It will contain an entry for each File in fs
-func WriteTarStream(w io.Writer, fs FileSource) error {
-	if err := fs.Iterate(func(f File) error {
+func WriteTarStream(ctx context.Context, w io.Writer, fs FileSource) error {
+	if err := fs.Iterate(ctx, func(f File) error {
 		return WriteTarEntry(w, f)
 	}); err != nil {
 		return err

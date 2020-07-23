@@ -121,6 +121,16 @@ func (s *Storage) newMergeReader(ctx context.Context, fileSets []string, opts ..
 	return newMergeReader(rs), nil
 }
 
+// NewSource makes a source which will iterate over the prefix fileSet
+func (s *Storage) NewSource(ctx context.Context, fileSet string, opts ...index.Option) FileSource {
+	return &mergeSource{
+		s: s,
+		getReader: func() (*MergeReader, error) {
+			return s.NewMergeReader(ctx, []string{fileSet}, opts...)
+		},
+	}
+}
+
 // ResolveIndexes resolves index entries that are spread across multiple filesets.
 func (s *Storage) ResolveIndexes(ctx context.Context, fileSets []string, f func(*index.Index) error, opts ...index.Option) error {
 	mr, err := s.NewMergeReader(ctx, fileSets, opts...)

@@ -46,7 +46,7 @@ func (r *Reader) Next() (*FileReader, error) {
 
 // Iterate iterates over the file readers in the fileset.
 // pathBound is an optional parameter for specifiying the upper bound (exclusive) of the iteration.
-func (r *Reader) Iterate(f func(File) error, pathBound ...string) error {
+func (r *Reader) Iterate(ctx context.Context, f func(File) error, pathBound ...string) error {
 	return r.iterate(func(fr *FileReader) error {
 		return f(fr)
 	})

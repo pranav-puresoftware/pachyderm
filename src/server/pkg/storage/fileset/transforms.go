@@ -1,61 +1,79 @@
 package fileset
 
 import (
+	"context"
 	"io"
 
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/index"
 	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/tar"
 )
 
-var _ FileSource = &HeaderFilter{}
+var _ FileSource = &headerFilter{}
 
-type HeaderFilter struct {
-	F func(th *tar.Header) bool
-	R FileSource
+type headerFilter struct {
+	pred func(th *tar.Header) bool
+	x    FileSource
 }
 
-func (hf *HeaderFilter) Iterate(cb func(File) error, stopBefore ...string) error {
-	return hf.R.Iterate(func(fr File) error {
+// NewHeaderFilter filters x using pred
+func NewHeaderFilter(x FileSource, pred func(th *tar.Header) bool) FileSource {
+	return &headerFilter{x: x, pred: pred}
+}
+
+func (hf *headerFilter) Iterate(ctx context.Context, cb func(File) error, stopBefore ...string) error {
+	return hf.x.Iterate(ctx, func(fr File) error {
 		th, err := fr.Header()
 		if err != nil {
 			return err
 		}
-		if hf.F(th) {
+		if hf.pred(th) {
 			return cb(fr)
 		}
 		return nil
 	}, stopBefore...)
 }
 
-type IndexFilter struct {
-	F func(idx *index.Index) bool
-	R FileSource
+var _ FileSource = &indexFilter{}
+
+type indexFilter struct {
+	pred func(idx *index.Index) bool
+	x    FileSource
 }
 
-func (fil *IndexFilter) Iterate(cb func(File) error, stopBefore ...string) error {
-	return fil.R.Iterate(func(fr File) error {
+// NewIndexFilter filters x using pred
+func NewIndexFilter(x FileSource, pred func(idx *index.Index) bool) FileSource {
+	return &indexFilter{x: x, pred: pred}
+}
+
+func (fil *indexFilter) Iterate(ctx context.Context, cb func(File) error, stopBefore ...string) error {
+	return fil.x.Iterate(ctx, func(fr File) error {
 		idx := fr.Index()
-		if fil.F(idx) {
+		if fil.pred(idx) {
 			cb(fr)
 		}
 		return nil
 	})
 }
 
-var _ FileSource = &HeaderMapper{}
+var _ FileSource = &headerMapper{}
 
-type HeaderMapper struct {
-	F func(th *tar.Header) *tar.Header
-	R FileSource
+type headerMapper struct {
+	pred func(th *tar.Header) *tar.Header
+	x    FileSource
 }
 
-func (hm *HeaderMapper) Iterate(cb func(File) error, stopBefore ...string) error {
-	return hm.R.Iterate(func(fr File) error {
+// NewHeaderMapper filters x using pred
+func NewHeaderMapper(x FileSource, pred func(*tar.Header) *tar.Header) FileSource {
+	return &headerMapper{x: x, pred: pred}
+}
+
+func (hm *headerMapper) Iterate(ctx context.Context, cb func(File) error, stopBefore ...string) error {
+	return hm.x.Iterate(ctx, func(fr File) error {
 		x, err := fr.Header()
 		if err != nil {
 			return err
 		}
-		y := hm.F(x)
+		y := hm.pred(x)
 		return cb(headerMap{
 			header: y,
 			inner:  fr,
