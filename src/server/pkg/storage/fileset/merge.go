@@ -30,13 +30,6 @@ func newMergeReader(rs []*Reader) *MergeReader {
 	return &MergeReader{pq: newPriorityQueue(fileStreams)}
 }
 
-// Iterate iterates over the file merge readers in the merged fileset.
-func (mr *MergeReader) Iterate(f func(File) error, stopBefore ...string) error {
-	return mr.iterate(func(fmr *FileMergeReader) error {
-		return f(fmr)
-	})
-}
-
 func (mr *MergeReader) iterate(f func(*FileMergeReader) error) error {
 	return mr.pq.iterate(func(ss []stream, _ ...string) error {
 		// Convert generic streams to file streams.

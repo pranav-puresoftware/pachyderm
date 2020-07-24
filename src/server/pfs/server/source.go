@@ -90,33 +90,45 @@ func (fr *FileReader) drain() error {
 
 // Source iterates over FileInfoV2s generated from a fileset.ReaderAPI
 type Source struct {
-	commit    *pfs.Commit
-	getReader func() fileset.FileSource
+	commit        *pfs.Commit
+	getReader     func() fileset.FileSource
+	computeHashes bool
 }
 
 // Creates a Reader which emits FileInfoV2s with the information from commit, and the entries from readers
 // returned by getReader.  If getReader returns different Readers all bets are off.
-func NewSource(commit *pfs.Commit, getReader func() fileset.FileSource) *Source {
+func NewSource(commit *pfs.Commit, computeHashes bool, getReader func() fileset.FileSource) *Source {
 	return &Source{
-		commit:    commit,
-		getReader: getReader,
+		commit:        commit,
+		getReader:     getReader,
+		computeHashes: computeHashes,
 	}
 }
 
 func (s *Source) Iterate(ctx context.Context, cb func(*pfs.FileInfoV2, fileset.File) error) error {
+	ctx, cf := context.WithCancel(ctx)
+	defer cf()
 	fs1 := s.getReader()
 	fs2 := s.getReader()
 	s2 := newStream(ctx, fs2)
 	cache := make(map[string][]byte)
 	return fs1.Iterate(ctx, func(fr fileset.File) error {
 		idx := fr.Index()
-		hashBytes, err := computeHash(cache, s2, idx.Path)
-		if err != nil {
-			return err
-		}
 		finfo := &pfs.FileInfoV2{
 			File: client.NewFile(s.commit.Repo.Name, s.commit.ID, idx.Path),
-			Hash: pfs.EncodeHash(hashBytes),
+		}
+		if s.computeHashes {
+			var err error
+			var hashBytes []byte
+			if indexIsDir(idx) {
+				hashBytes, err = computeHash(cache, s2, idx.Path)
+				if err != nil {
+					return err
+				}
+			} else {
+				hashBytes = computeFileHash(idx)
+			}
+			finfo.Hash = pfs.EncodeHash(hashBytes)
 		}
 		if err := cb(finfo, fr); err != nil {
 			return err
@@ -148,38 +160,43 @@ func computeHash(cache map[string][]byte, s *stream, x string) ([]byte, error) {
 		return nil, err
 	}
 	idx = fr.Index()
+	// for file
+	if !indexIsDir(idx) {
+		return computeFileHash(idx), nil
+	}
+	// for directory
 	h := pfs.NewHash()
-	if indexIsDir(idx) {
-		// for directory
-		for {
-			f2, err := s.Peek()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return nil, err
-			}
-			idx2 := f2.Index()
-			if !strings.HasPrefix(idx2.Path, x) {
+	for {
+		f2, err := s.Peek()
+		if err != nil {
+			if err == io.EOF {
 				break
 			}
-			childHash, err := computeHash(cache, s, idx2.Path)
-			if err != nil {
-				return nil, err
-			}
-			h.Write(childHash)
+			return nil, err
 		}
-	} else {
-		// for file
-		if idx.DataOp != nil {
-			for _, dataRef := range idx.DataOp.DataRefs {
-				h.Write([]byte(dataRef.Hash))
-			}
+		idx2 := f2.Index()
+		if !strings.HasPrefix(idx2.Path, x) {
+			break
 		}
+		childHash, err := computeHash(cache, s, idx2.Path)
+		if err != nil {
+			return nil, err
+		}
+		h.Write(childHash)
 	}
 	hashBytes := h.Sum(nil)
 	cache[x] = hashBytes
 	return hashBytes, nil
+}
+
+func computeFileHash(idx *index.Index) []byte {
+	h := pfs.NewHash()
+	if idx.DataOp != nil {
+		for _, dataRef := range idx.DataOp.DataRefs {
+			h.Write([]byte(dataRef.Hash))
+		}
+	}
+	return h.Sum(nil)
 }
 
 type stream struct {

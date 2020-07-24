@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	globlib "github.com/pachyderm/ohmyglob"
+	"github.com/pachyderm/pachyderm/src/server/pkg/storage/fileset/index"
 )
 
 var globRegex = regexp.MustCompile(`[*?[\]{}!()@+^]`)
@@ -37,6 +38,15 @@ func matchFunc(glob string) (func(string) bool, error) {
 		s = path.Clean(s)
 		return g.Match(s) && (parentG == nil || !parentG.Match(s))
 	}, nil
+}
+
+func parseGlob(glob string) (index.Option, func(string) bool, error) {
+	mf, err := matchFunc(glob)
+	if err != nil {
+		return nil, nil, err
+	}
+	prefix := globLiteralPrefix(glob)
+	return index.WithPrefix(prefix), mf, nil
 }
 
 func pathIsChild(parent, child string) bool {

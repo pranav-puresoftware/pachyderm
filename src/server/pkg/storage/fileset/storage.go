@@ -132,6 +132,7 @@ func (s *Storage) NewSource(ctx context.Context, fileSet string, opts ...index.O
 }
 
 // ResolveIndexes resolves index entries that are spread across multiple filesets.
+// DEPRECATED: Use NewIndexResolver
 func (s *Storage) ResolveIndexes(ctx context.Context, fileSets []string, f func(*index.Index) error, opts ...index.Option) error {
 	mr, err := s.NewMergeReader(ctx, fileSets, opts...)
 	if err != nil {

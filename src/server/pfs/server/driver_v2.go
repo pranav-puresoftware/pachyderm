@@ -166,12 +166,11 @@ func (d *driverV2) withFileSet(ctx context.Context, repo, commit string, f func(
 }
 
 func (d *driverV2) getTar(ctx context.Context, commit *pfs.Commit, glob string, w io.Writer) error {
-	prefix := globLiteralPrefix(glob)
-	mf, err := matchFunc(glob)
+	indexOpt, mf, err := parseGlob(glob)
 	if err != nil {
 		return err
 	}
-	s := d.storage.NewSource(ctx, compactedCommitPath(commit), index.WithPrefix(prefix))
+	s := d.storage.NewSource(ctx, compactedCommitPath(commit), indexOpt)
 	filter := fileset.NewIndexFilter(s, func(idx *index.Index) bool {
 		return mf(idx.Path)
 	})
@@ -195,32 +194,23 @@ func (d *driverV2) listFileV2(pachClient *client.APIClient, file *pfs.File, full
 		return err
 	}
 	name := strings.TrimRight(file.Path, "/")
-	// exact match
-	getExact := func() fileset.FileSource {
-		x := d.storage.NewSource(ctx, compactedCommitPath(file.Commit), index.WithExact(name))
-		return fileset.NewIndexFilter(x, func(idx *index.Index) bool {
-			return idx.Path == name
+	s := NewSource(file.Commit, true, func() fileset.FileSource {
+		x := d.storage.NewSource(ctx, compactedCommitPath(file.Commit), index.WithPrefix(name))
+		x = fileset.NewIndexResolver(x)
+		x = fileset.NewIndexFilter(x, func(idx *index.Index) bool {
+			if idx.Path == name {
+				return true
+			}
+			if idx.Path == name+"/" {
+				return false
+			}
+			return strings.HasPrefix(idx.Path, name)
 		})
-	}
-	// children
-	getChildren := func() fileset.FileSource {
-		x := d.storage.NewSource(ctx, compactedCommitPath(file.Commit), index.WithPrefix(name+"/"))
-		return fileset.NewIndexFilter(x, func(idx *index.Index) bool {
-			return idx.Path != name+"/"
-		})
-	}
-	// create readers
-	exact := NewSource(file.Commit, getExact)
-	children := NewSource(file.Commit, getChildren)
-	// iterate
-	if err := exact.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.File) error {
-		return cb(finfo)
-	}); err != nil {
-		return err
-	}
-	if err := children.Iterate(ctx, func(finfo *pfs.FileInfoV2, _ fileset.File) error {
-		if pathIsChild(name, finfo.File.Path) {
-			return cb(finfo)
+		return x
+	})
+	if err := s.Iterate(ctx, func(fi *pfs.FileInfoV2, _ fileset.File) error {
+		if pathIsChild(name, fi.File.Path) {
+			return cb(fi)
 		}
 		return nil
 	}); err != nil {
@@ -462,19 +452,19 @@ func (d *driverV2) globFileV2(pachClient *client.APIClient, commit *pfs.Commit, 
 		return err
 	}
 	ctx := pachClient.Ctx()
-	prefix := globLiteralPrefix(glob)
-	mf, err := matchFunc(glob)
+	indexOpt, mf, err := parseGlob(glob)
 	if err != nil {
 		return err
 	}
-	r := NewSource(commit, func() fileset.FileSource {
-		x := d.storage.NewSource(ctx, compactedCommitPath(commit), index.WithPrefix(prefix))
+	s := NewSource(commit, true, func() fileset.FileSource {
+		x := d.storage.NewSource(ctx, compactedCommitPath(commit), indexOpt)
+		x = fileset.NewIndexResolver(x)
 		return fileset.NewIndexFilter(x, func(idx *index.Index) bool {
 			return mf(idx.Path)
 		})
 	})
-	return r.Iterate(ctx, func(finfo *pfs.FileInfoV2, f fileset.File) error {
-		return cb(finfo)
+	return s.Iterate(ctx, func(fi *pfs.FileInfoV2, f fileset.File) error {
+		return cb(fi)
 	})
 }
 

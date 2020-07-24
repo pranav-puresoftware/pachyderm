@@ -39,11 +39,14 @@ func (mr *mergeResolver) Iterate(ctx context.Context, cb func(File) error, stopB
 		if err != nil {
 			return err
 		}
+		if fmr.Index().Path != idx.Path {
+			panic("different merge readers from getReader")
+		}
 		fmr.fullIdx = idx
 		return cb(fmr)
 	}))
 	if err := mr1.WriteTo(w); err != nil {
 		return err
 	}
-	return nil
+	return w.Close()
 }

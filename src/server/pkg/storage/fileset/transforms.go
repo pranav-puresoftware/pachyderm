@@ -89,8 +89,7 @@ type headerMap struct {
 }
 
 func (hm headerMap) Index() *index.Index {
-	// TODO: should be able to transform the path?
-	return hm.Index()
+	return nil
 }
 
 func (hm headerMap) Header() (*tar.Header, error) {
