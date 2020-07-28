@@ -18,7 +18,7 @@ set -ex
 # time out, give up. If we succeed, stash that code in a docker image which
 # later tests can use to get it back.
 
-cd /home/travis/gopath/src/github.com/pachyderm/pachyderm
+cd /home/travis/gopath/src/github.com/$USER/pachyderm
 
 if [ "${TRAVIS_PULL_REQUEST}" == "false" ]; then
     # These shenannigans not needed for release and branch builds, hopefully.
@@ -73,7 +73,7 @@ fi
 
 docker login -u pachydermbuildbot -p "${DOCKER_PWD}"
 
-cd /home/travis/gopath/src/github.com/pachyderm
+cd /home/travis/gopath/src/github.com/$USER
 mkdir -p /tmp/save_git_tarball
 tar cf /tmp/save_git_tarball/pachyderm.tar pachyderm
 cd /tmp/save_git_tarball

@@ -4,7 +4,7 @@ set -ex
 
 # install latest version of docker
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+sudo add-apt-repository "deb [arch=${TRAVIS_CPU_ARCH}] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
 sudo apt-get update -y
 sudo apt-get -y -o Dpkg::Options::="--force-confnew" install docker-ce
 
@@ -14,6 +14,16 @@ echo '{"experimental":true}' | sudo tee /etc/docker/daemon.json
 sudo service docker restart
 
 # Install deps
+if [ "${TRAVIS_CPU_ARCH}" == "arm64" ]
+then
+	sudo add-apt-repository "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ bionic main restricted universe multiverse"
+	sudo add-apt-repository "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ bionic-updates main restricted universe multiverse"
+	sudo add-apt-repository "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ bionic-backports main restricted universe multiverse"
+	sudo add-apt-repository "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ bionic-security main restricted universe multiverse"
+	sudo apt-get update
+	sudo apt-get install linux-headers-`uname -r`
+	sudo apt-get install --reinstall linux-image-`uname -r`
+fi
 sudo apt-get install -y -qq \
   jq \
   silversearcher-ag \
@@ -24,12 +34,16 @@ sudo apt-get install -y -qq \
   fuse
 
 # Install fuse
+if [ "${TRAVIS_CPU_ARCH}" == "amd64" ]
+then
+	sudo chmod 666 /dev/fuse
+fi
 sudo modprobe fuse
-sudo chmod 666 /dev/fuse
 sudo cp etc/build/fuse.conf /etc/fuse.conf
 sudo chown root:root /etc/fuse.conf
 
 # Install aws CLI (for TLS test)
+python3 -m pip install -U pip
 pip3 install --upgrade --user wheel
 pip3 install --upgrade --user awscli
 
