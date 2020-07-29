@@ -18,7 +18,7 @@ if [[ ! "$TRAVIS_SECURE_ENV_VARS" == "true" ]]; then
     echo "Not trying to fetch pachyderm.tar as we are running for an external"
     echo "contributor"
 else
-    cd /home/travis/gopath/src/github.com/pachyderm/
+    cd /home/travis/gopath/src/github.com/pranav-puresoftware/
     mv pachyderm pachyderm.old
 
     docker login -u pachydermbuildbot -p "${DOCKER_PWD}"
