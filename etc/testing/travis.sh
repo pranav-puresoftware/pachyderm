@@ -55,7 +55,7 @@ kubectl version
 
 echo "Running test suite based on BUCKET=$BUCKET"
 
-if [[ "$TRAVIS_SECURE_ENV_VARS" == "true" ]]; then
+if [[ "true" == "true" ]]; then
     # Pull the pre-built images. This is only done if we have access to the
     # secret env vars, because otherwise the build step would've had to be
     # skipped.
