@@ -61,10 +61,14 @@ if [[ "true" == "true" ]]; then
     # skipped.
     make install
     version=$(pachctl version --client-only)
-    docker pull "pachyderm/pachd:${version}"
-    docker tag "pachyderm/pachd:${version}" "pachyderm/pachd:local"
-    docker pull "pachyderm/worker:${version}"
-    docker tag "pachyderm/worker:${version}" "pachyderm/worker:local"
+    #docker pull "pachyderm/pachd:${version}"
+    docker pull pachyderm/pachd:1.12.0-732eaf0f6ea28b8b03980f705b4021602eeb088a
+    #docker tag "pachyderm/pachd:${version}" "pachyderm/pachd:local"
+    docker tag pachyderm/pachd:1.12.0-732eaf0f6ea28b8b03980f705b4021602eeb088a pachyderm/pachd:local
+    #docker pull "pachyderm/worker:${version}"
+    docker pull pachyderm/worker:1.12.0-732eaf0f6ea28b8b03980f705b4021602eeb088a
+    #docker tag "pachyderm/worker:${version}" "pachyderm/worker:local"
+    docker tag pachyderm/worker:1.12.0-732eaf0f6ea28b8b03980f705b4021602eeb088a pachyderm/worker:local
 else
     make docker-build
     # push pipeline build images
